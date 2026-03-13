@@ -1,0 +1,7 @@
+.claude
+.venv
+.env
+db.sqlite
+__pycache__/
+*.pyc
+.idea
