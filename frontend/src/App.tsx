@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   SplitLayout,
   SplitCol,
@@ -14,9 +14,12 @@ import {
   Icon28ArticleOutline,
   Icon28SearchOutline,
   Icon28KeyOutline,
+  Icon28GlobeOutline,
 } from '@vkontakte/icons'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ProgressProvider } from './contexts/ProgressContext'
+import { LanguageProvider, useLanguage } from './contexts/LanguageContext'
+import { setApiLanguage } from './api'
 import AuthPage from './pages/AuthPage'
 import TomesPage from './pages/TomesPage'
 import TomePage from './pages/TomePage'
@@ -26,13 +29,37 @@ import AdminPage from './pages/AdminPage'
 type Story = 'tomes' | 'search' | 'admin'
 type TomesPanel = 'list' | 'detail'
 
+// Переключатель языка для таббара
+function LanguageTabItem() {
+  const { lang, setLang } = useLanguage()
+
+  const handleClick = () => {
+    setLang(lang === 'en' ? 'ru' : 'en')
+  }
+
+  return (
+    <TabbarItem
+      onClick={handleClick}
+      label={lang.toUpperCase()}
+    >
+      <Icon28GlobeOutline />
+    </TabbarItem>
+  )
+}
+
 function AppContent() {
   const { user, loading } = useAuth()
+  const { lang, t } = useLanguage()
   const [activeStory, setActiveStory] = useState<Story>('tomes')
   const [tomesPanel, setTomesPanel] = useState<TomesPanel>('list')
   const [activeTomeKey, setActiveTomeKey] = useState<string | null>(null)
 
   const isAdmin = Boolean(user?.is_admin)
+
+  // Обновляем язык API при смене языка
+  useEffect(() => {
+    setApiLanguage(lang)
+  }, [lang])
 
   if (loading) {
     return (
@@ -78,25 +105,26 @@ function AppContent() {
                 <TabbarItem
                   onClick={() => setActiveStory('tomes')}
                   selected={activeStory === 'tomes'}
-                  label="Тома"
+                  label={t('nav.tomes')}
                 >
                   <Icon28ArticleOutline />
                 </TabbarItem>
                 <TabbarItem
                   onClick={() => setActiveStory('search')}
                   selected={activeStory === 'search'}
-                  label="Поиск"
+                  label={t('nav.search')}
                 >
                   <Icon28SearchOutline />
                 </TabbarItem>
                 <TabbarItem
                   onClick={() => setActiveStory('admin')}
                   selected={activeStory === 'admin'}
-                  label="Админ"
+                  label={t('nav.admin')}
                   style={{ display: isAdmin ? undefined : 'none' }}
                 >
                   <Icon28KeyOutline />
                 </TabbarItem>
+                <LanguageTabItem />
               </Tabbar>
             }
           >
@@ -128,7 +156,9 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <LanguageProvider>
+        <AppContent />
+      </LanguageProvider>
     </AuthProvider>
   )
 }

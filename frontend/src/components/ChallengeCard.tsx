@@ -3,9 +3,13 @@ import { Card, Text, Caption } from '@vkontakte/vkui'
 import {
   Icon24CheckCircleOutline,
   Icon24LockOutline,
-  Icon240CircleOutline,
+  Icon24CircleSmallOutline,
+  Icon24Play,
+  Icon24FlagFinish,
+  Icon24Gift,
 } from '@vkontakte/icons'
-import type { Challenge, ChallengeStatus } from '../types'
+import type { Challenge, ChallengeStatus, ChallengeNodeType } from '../types'
+import { getNodeType } from '../types'
 
 const ROLE_LABELS: Record<string, string> = {
   survivor: 'Выживший',
@@ -19,6 +23,20 @@ const ROLE_COLORS: Record<string, string> = {
   shared: '#2196F3',
 }
 
+const NODE_TYPE_COLORS: Record<ChallengeNodeType, string> = {
+  prologue: '#9C27B0',  // фиолетовый
+  epilogue: '#FF9800', // оранжевый
+  reward: '#FFD700',   // золотой
+  challenge: '#2196F3', // синий (default)
+}
+
+const NODE_TYPE_LABELS: Record<ChallengeNodeType, string> = {
+  prologue: 'Пролог',
+  epilogue: 'Эпилог',
+  reward: 'Награда',
+  challenge: '',
+}
+
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
 }
@@ -28,30 +46,89 @@ interface Props {
   status: ChallengeStatus
   subtitle?: string
   onClick: () => void
+  compact?: boolean // компактный режим для прологов/эпилогов
 }
 
-export default function ChallengeCard({ challenge, status, subtitle, onClick }: Props) {
+export default function ChallengeCard({ challenge, status, subtitle, onClick, compact }: Props) {
   const isLocked = status === 'locked'
   const isDone = status === 'completed'
+  const nodeType = getNodeType(challenge.name)
+  const isSpecialNode = nodeType === 'prologue' || nodeType === 'epilogue' || nodeType === 'reward'
+
+  const nodeColor = NODE_TYPE_COLORS[nodeType]
   const roleColor = ROLE_COLORS[challenge.role] ?? '#9E9E9E'
   const roleLabel = ROLE_LABELS[challenge.role] ?? (challenge.role || '?')
+
+  // Иконка в зависимости от типа
+  const renderIcon = () => {
+    if (isDone) {
+      return <Icon24CheckCircleOutline fill="var(--vkui--color_icon_positive)" />
+    }
+    if (isLocked) {
+      return <Icon24LockOutline fill="var(--vkui--color_icon_tertiary)" />
+    }
+    switch (nodeType) {
+      case 'prologue':
+        return <Icon24Play fill={nodeColor} />
+      case 'epilogue':
+        return <Icon24FlagFinish fill={nodeColor} />
+      case 'reward':
+        return <Icon24Gift fill={nodeColor} />
+      default:
+        return <Icon24CircleSmallOutline fill="var(--vkui--color_icon_secondary)" />
+    }
+  }
+
+  // Компактный режим для прологов/эпилогов
+  if (compact || isSpecialNode) {
+    return (
+      <Card
+        mode="shadow"
+        style={{
+          opacity: isLocked ? 0.5 : 1,
+          cursor: isLocked ? 'not-allowed' : 'pointer',
+          userSelect: 'none',
+          background: isDone ? 'var(--vkui--color_background_positive)' : undefined,
+          borderColor: nodeColor,
+          borderWidth: 2,
+        }}
+        onClick={onClick}
+      >
+        <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          {renderIcon()}
+          <Text
+            weight="2"
+            style={{
+              color: isDone ? 'var(--vkui--color_text_contrast)' : nodeColor,
+            }}
+          >
+            {NODE_TYPE_LABELS[nodeType] || challenge.name || challenge.challenge_key}
+          </Text>
+          {isDone && (
+            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--vkui--color_text_contrast)' }}>
+              ✓
+            </span>
+          )}
+        </div>
+      </Card>
+    )
+  }
 
   return (
     <Card
       mode="shadow"
-      style={{ opacity: isLocked ? 0.5 : 1, cursor: isLocked ? 'not-allowed' : 'pointer', userSelect: 'none' }}
+      style={{
+        opacity: isLocked ? 0.5 : 1,
+        cursor: isLocked ? 'not-allowed' : 'pointer',
+        userSelect: 'none',
+        background: isDone ? 'var(--vkui--color_background_positive)' : undefined,
+      }}
       onClick={onClick}
     >
       <div style={{ padding: '12px 14px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
           <div style={{ paddingTop: 1, flexShrink: 0 }}>
-            {isDone ? (
-              <Icon24CheckCircleOutline fill="var(--vkui--color_icon_positive)" />
-            ) : isLocked ? (
-              <Icon24LockOutline fill="var(--vkui--color_icon_tertiary)" />
-            ) : (
-              <Icon240CircleOutline fill="var(--vkui--color_icon_secondary)" />
-            )}
+            {renderIcon()}
           </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -59,9 +136,11 @@ export default function ChallengeCard({ challenge, status, subtitle, onClick }: 
               <Text
                 weight="2"
                 style={{
-                  color: isLocked
-                    ? 'var(--vkui--color_text_secondary)'
-                    : 'var(--vkui--color_text_primary)',
+                  color: isDone
+                    ? 'var(--vkui--color_text_contrast)'
+                    : isLocked
+                      ? 'var(--vkui--color_text_secondary)'
+                      : 'var(--vkui--color_text_primary)',
                   flex: 1,
                 }}
               >
@@ -86,7 +165,9 @@ export default function ChallengeCard({ challenge, status, subtitle, onClick }: 
             {challenge.objective && (
               <Caption
                 style={{
-                  color: 'var(--vkui--color_text_secondary)',
+                  color: isDone
+                    ? 'var(--vkui--color_text_contrast_secondary)'
+                    : 'var(--vkui--color_text_secondary)',
                   marginTop: 4,
                   display: '-webkit-box',
                   WebkitLineClamp: 2,
@@ -99,7 +180,10 @@ export default function ChallengeCard({ challenge, status, subtitle, onClick }: 
             )}
 
             {subtitle && (
-              <Caption style={{ color: 'var(--vkui--color_text_tertiary)', marginTop: 4 }}>
+              <Caption style={{
+                color: isDone ? 'var(--vkui--color_text_contrast_secondary)' : 'var(--vkui--color_text_tertiary)',
+                marginTop: 4
+              }}>
                 {subtitle}
               </Caption>
             )}
@@ -113,8 +197,12 @@ export default function ChallengeCard({ challenge, status, subtitle, onClick }: 
                       fontSize: 11,
                       padding: '1px 7px',
                       borderRadius: 10,
-                      background: 'var(--vkui--color_background_secondary)',
-                      color: 'var(--vkui--color_text_secondary)',
+                      background: isDone
+                        ? 'rgba(255,255,255,0.2)'
+                        : 'var(--vkui--color_background_secondary)',
+                      color: isDone
+                        ? 'var(--vkui--color_text_contrast)'
+                        : 'var(--vkui--color_text_secondary)',
                     }}
                   >
                     {r.id}: {r.amount}

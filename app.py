@@ -139,11 +139,72 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # колонка уже существует
 
+    # Миграция: добавить колонки позиций для древовидной структуры
+    for col_def in ["grid_column INTEGER", "grid_row INTEGER"]:
+        try:
+            conn.execute(f"ALTER TABLE challenges ADD COLUMN {col_def}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # колонка уже существует
+
+    # Миграция: создать таблицу зависимостей между заданиями
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS challenge_dependencies (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id  INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
+                parent_id INTEGER NOT NULL REFERENCES challenges(id) ON DELETE CASCADE,
+                UNIQUE(child_id, parent_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dep_child ON challenge_dependencies(child_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_dep_parent ON challenge_dependencies(parent_id)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # таблица уже существует
+
+    # Миграция: добавить колонки для русского языка
+    for col_def in ["name_ru TEXT", "objective_ru TEXT"]:
+        try:
+            conn.execute(f"ALTER TABLE challenges ADD COLUMN {col_def}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # колонка уже существует
+
     conn.commit()
     conn.close()
 
 
 # ─── Вспомогательные функции ──────────────────────────────────────────────────
+
+SUPPORTED_LANGS = {"en", "ru"}
+DEFAULT_LANG = "en"
+
+
+def get_request_lang() -> str:
+    """Получить язык из запроса (query param или header)."""
+    lang = request.args.get("lang", "").lower()
+    if lang in SUPPORTED_LANGS:
+        return lang
+    # Проверяем Accept-Language header
+    accept_lang = request.headers.get("Accept-Language", "").lower()
+    if accept_lang.startswith("ru"):
+        return "ru"
+    return DEFAULT_LANG
+
+
+def localize_challenge(d: dict, lang: str) -> dict:
+    """Применить локализацию к заданию."""
+    if lang == "ru":
+        if d.get("name_ru"):
+            d["name"] = d["name_ru"]
+        if d.get("objective_ru"):
+            d["objective"] = d["objective_ru"]
+    # Удаляем технические поля перевода
+    d.pop("name_ru", None)
+    d.pop("objective_ru", None)
+    return d
+
 
 def row_to_dict(row) -> dict | None:
     if row is None:
@@ -298,8 +359,11 @@ def get_tome(archive_key: str):
 def get_page(page_id: int):
     """
     Страница со списком заданий.
+    Query params:
+      lang — язык (en/ru)
     Ответ 200: { ...page, challenges: [ { challenge_key, name, role, objective, rewards }, ... ] }
     """
+    lang = get_request_lang()
     db = get_db()
     page = db.execute("SELECT * FROM pages WHERE id = ?", (page_id,)).fetchone()
     if not page:
@@ -311,7 +375,7 @@ def get_page(page_id: int):
     ).fetchall()
 
     result = row_to_dict(page)
-    result["challenges"] = [row_to_dict(c) for c in challenges]
+    result["challenges"] = [localize_challenge(row_to_dict(c), lang) for c in challenges]
     return jsonify(result)
 
 
@@ -324,7 +388,9 @@ def list_challenges():
       page_id — id страницы
       role    — survivor / killer / shared
       q       — поиск по названию и описанию
+      lang    — язык (en/ru)
     """
+    lang = get_request_lang()
     db = get_db()
     tome_filter = request.args.get("tome")
     page_filter = request.args.get("page_id")
@@ -350,21 +416,25 @@ def list_challenges():
         query += " AND c.role = ?"
         params.append(role_filter)
     if search:
-        query += " AND (c.name LIKE ? OR c.objective LIKE ?)"
-        params += [f"%{search}%", f"%{search}%"]
+        # Поиск и по английскому, и по русскому
+        query += " AND (c.name LIKE ? OR c.objective LIKE ? OR c.name_ru LIKE ? OR c.objective_ru LIKE ?)"
+        params += [f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%"]
 
     query += " ORDER BY t.id, p.level_number, c.node_index"
 
     rows = db.execute(query, params).fetchall()
-    return jsonify([row_to_dict(r) for r in rows])
+    return jsonify([localize_challenge(row_to_dict(r), lang) for r in rows])
 
 
 @app.get("/api/challenges/<challenge_key>")
 def get_challenge(challenge_key: str):
     """
     Одно задание со сведениями о томе и странице.
+    Query params:
+      lang — язык (en/ru)
     Ответ 200: { challenge_key, name, role, objective, rewards, level_number, archive_key, tome_name }
     """
+    lang = get_request_lang()
     db = get_db()
     row = db.execute(
         """SELECT c.*, p.level_number, t.archive_key, t.name AS tome_name
@@ -376,7 +446,7 @@ def get_challenge(challenge_key: str):
     ).fetchone()
     if not row:
         return jsonify({"error": "Challenge not found"}), 404
-    return jsonify(row_to_dict(row))
+    return jsonify(localize_challenge(row_to_dict(row), lang))
 
 
 # ─── Прогресс пользователя ────────────────────────────────────────────────────
@@ -386,15 +456,18 @@ def get_challenge(challenge_key: str):
 def get_progress():
     """
     Прогресс текущего пользователя по всем заданиям. Требует JWT.
+    Query params:
+      lang — язык (en/ru)
     Возвращает только задания, для которых есть запись (completed = 0 или 1).
     Ответ 200: [ { challenge_key, completed, updated_at, ... }, ... ]
     """
+    lang = get_request_lang()
     user_id = int(get_jwt_identity())
     db = get_db()
 
     rows = db.execute(
         """SELECT ucp.completed, ucp.updated_at,
-                  c.challenge_key, c.name AS challenge_name, c.role,
+                  c.challenge_key, c.name AS challenge_name, c.name_ru AS challenge_name_ru, c.role,
                   p.level_number, t.archive_key, t.name AS tome_name
            FROM   user_challenge_progress ucp
            JOIN   challenges c ON ucp.challenge_id = c.id
@@ -405,7 +478,15 @@ def get_progress():
         (user_id,),
     ).fetchall()
 
-    return jsonify([row_to_dict(r) for r in rows])
+    result = []
+    for r in rows:
+        d = row_to_dict(r)
+        if lang == "ru" and d.get("challenge_name_ru"):
+            d["challenge_name"] = d["challenge_name_ru"]
+        d.pop("challenge_name_ru", None)
+        result.append(d)
+
+    return jsonify(result)
 
 
 @app.put("/api/user/progress/<challenge_key>")
@@ -483,31 +564,34 @@ def toggle_admin(user_id: int):
 def sync_catalog():
     """
     Загрузить полный каталог томов с dbd.tricky.lol и сохранить в БД.
-    Авторизация не требуется. Безопасно вызывать повторно (upsert).
-
-    Источник данных: https://dbd.tricky.lol/api/archives
-    Структура ответа:
-      { "<archive_key>": { name, start, end, levels: { "<num>": { nodes: [...] } } } }
-
-    Каждый node (задание):
-      { name, role, objective, rewards: [{type, id, amount}] }
+    Загружает данные на английском и русском языках.
+    Безопасно вызывать повторно (upsert).
     """
     try:
-        resp = requests.get(ARCHIVES_URL, timeout=30)
-        resp.raise_for_status()
-        archives: dict = resp.json()
+        # Загрузить английскую версию
+        resp_en = requests.get(ARCHIVES_URL, timeout=30)
+        resp_en.raise_for_status()
+        archives_en: dict = resp_en.json()
+
+        # Загрузить русскую версию
+        resp_ru = requests.get(ARCHIVES_URL, timeout=30, headers={"Accept-Language": "ru"})
+        resp_ru.raise_for_status()
+        archives_ru: dict = resp_ru.json()
     except requests.RequestException as exc:
         return jsonify({"error": f"Failed to fetch catalog: {exc}"}), 502
 
-    if not isinstance(archives, dict):
+    if not isinstance(archives_en, dict) or not isinstance(archives_ru, dict):
         return jsonify({"error": "Unexpected response format from source API"}), 502
 
     db = get_db()
     counts = {"tomes": 0, "pages": 0, "challenges": 0}
 
-    for archive_key, archive in archives.items():
+    for archive_key, archive in archives_en.items():
         if not isinstance(archive, dict):
             continue
+
+        # Русская версия архива
+        archive_ru = archives_ru.get(archive_key, {})
 
         # ── Том ──────────────────────────────────────────────────────────────
         db.execute(
@@ -533,6 +617,9 @@ def sync_catalog():
 
         # ── Уровни / страницы ─────────────────────────────────────────────────
         levels = archive.get("levels", {})
+        # Русские уровни
+        levels_ru = archive_ru.get("levels", {}) if isinstance(archive_ru, dict) else {}
+
         # Поддержка dict {"1": {...}} и list [{...}]
         if isinstance(levels, list):
             levels_items = [(i + 1, lv) for i, lv in enumerate(levels)]
@@ -569,6 +656,13 @@ def sync_catalog():
                 if isinstance(level_data, dict)
                 else []
             )
+
+            # Русские ноды
+            level_ru = levels_ru.get(str(level_number), levels_ru.get(level_number, {}))
+            if isinstance(levels_ru, list):
+                level_ru = levels_ru[level_number - 1] if level_number - 1 < len(levels_ru) else {}
+            nodes_ru = level_ru.get("nodes", []) if isinstance(level_ru, dict) else []
+
             for node_idx, node in enumerate(nodes):
                 if not isinstance(node, dict):
                     continue
@@ -578,15 +672,22 @@ def sync_catalog():
                     node.get("rewards", []), ensure_ascii=False
                 )
 
+                # Русский перевод
+                node_ru = nodes_ru[node_idx] if node_idx < len(nodes_ru) else {}
+                name_ru = node_ru.get("name") if isinstance(node_ru, dict) else None
+                objective_ru = node_ru.get("objective") if isinstance(node_ru, dict) else None
+
                 db.execute(
                     """INSERT INTO challenges
-                           (page_id, challenge_key, node_index, name, role, objective, rewards)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                           (page_id, challenge_key, node_index, name, role, objective, rewards, name_ru, objective_ru)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(challenge_key) DO UPDATE
-                           SET name      = excluded.name,
-                               role      = excluded.role,
-                               objective = excluded.objective,
-                               rewards   = excluded.rewards""",
+                           SET name        = excluded.name,
+                               role        = excluded.role,
+                               objective   = excluded.objective,
+                               rewards     = excluded.rewards,
+                               name_ru     = excluded.name_ru,
+                               objective_ru = excluded.objective_ru""",
                     (
                         page_row["id"],
                         challenge_key,
@@ -595,6 +696,8 @@ def sync_catalog():
                         node.get("role"),
                         node.get("objective"),
                         rewards_json,
+                        name_ru,
+                        objective_ru,
                     ),
                 )
                 counts["challenges"] += 1
@@ -606,6 +709,309 @@ def sync_catalog():
         "tomes": counts["tomes"],
         "pages": counts["pages"],
         "challenges": counts["challenges"],
+    })
+
+
+# ─── Зависимости между заданиями ──────────────────────────────────────────────
+
+@app.get("/api/pages/<int:page_id>/dependencies")
+def get_page_dependencies(page_id: int):
+    """
+    Граф зависимостей для страницы.
+    Ответ 200: { challenges: [...], dependencies: [{ child_id, parent_id }] }
+    """
+    lang = get_request_lang()
+    db = get_db()
+
+    page = db.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone()
+    if not page:
+        return jsonify({"error": "Page not found"}), 404
+
+    challenges = db.execute("""
+        SELECT id, challenge_key, name, role, objective, grid_column, grid_row, name_ru, objective_ru
+        FROM challenges
+        WHERE page_id = ?
+        ORDER BY node_index
+    """, (page_id,)).fetchall()
+
+    if not challenges:
+        return jsonify({"challenges": [], "dependencies": []})
+
+    challenge_ids = [c["id"] for c in challenges]
+    placeholders = ",".join("?" * len(challenge_ids))
+
+    dependencies = db.execute(f"""
+        SELECT child_id, parent_id
+        FROM challenge_dependencies
+        WHERE child_id IN ({placeholders})
+    """, challenge_ids).fetchall()
+
+    return jsonify({
+        "challenges": [localize_challenge(row_to_dict(c), lang) for c in challenges],
+        "dependencies": [{"child_id": d["child_id"], "parent_id": d["parent_id"]} for d in dependencies]
+    })
+
+
+@app.put("/api/admin/challenges/<challenge_key>/position")
+@admin_required
+def set_challenge_position(challenge_key: str):
+    """
+    Установить позицию задания в сетке. Только для админов.
+    Body: { "grid_column": 5, "grid_row": 3 }
+    Ответ 200: { challenge_key, grid_column, grid_row }
+    """
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+
+    grid_column = data.get("grid_column")
+    grid_row = data.get("grid_row")
+
+    if grid_column is None or grid_row is None:
+        return jsonify({"error": "grid_column and grid_row are required"}), 400
+
+    result = db.execute("""
+        UPDATE challenges
+        SET grid_column = ?, grid_row = ?
+        WHERE challenge_key = ?
+    """, (grid_column, grid_row, challenge_key))
+
+    if result.rowcount == 0:
+        return jsonify({"error": "Challenge not found"}), 404
+
+    db.commit()
+    return jsonify({"challenge_key": challenge_key, "grid_column": grid_column, "grid_row": grid_row})
+
+
+@app.post("/api/admin/challenges/<challenge_key>/dependencies")
+@admin_required
+def set_challenge_dependencies(challenge_key: str):
+    """
+    Установить зависимости задания (заменяет все существующие). Только для админов.
+    Body: { "parent_keys": ["Tome01_L1_N0", "Tome01_L1_N2"] }
+    Ответ 200: { challenge_key, parent_keys }
+    """
+    db = get_db()
+    data = request.get_json(silent=True) or {}
+    parent_keys = data.get("parent_keys", [])
+
+    challenge = db.execute(
+        "SELECT id FROM challenges WHERE challenge_key = ?", (challenge_key,)
+    ).fetchone()
+    if not challenge:
+        return jsonify({"error": "Challenge not found"}), 404
+
+    # Удалить существующие зависимости
+    db.execute("DELETE FROM challenge_dependencies WHERE child_id = ?", (challenge["id"],))
+
+    # Добавить новые зависимости
+    valid_parent_keys = []
+    for parent_key in parent_keys:
+        parent = db.execute(
+            "SELECT id FROM challenges WHERE challenge_key = ?", (parent_key,)
+        ).fetchone()
+        if parent and parent["id"] != challenge["id"]:  # нельзя зависеть от себя
+            db.execute("""
+                INSERT INTO challenge_dependencies (child_id, parent_id)
+                VALUES (?, ?)
+            """, (challenge["id"], parent["id"]))
+            valid_parent_keys.append(parent_key)
+
+    db.commit()
+    return jsonify({"challenge_key": challenge_key, "parent_keys": valid_parent_keys})
+
+
+@app.post("/api/admin/pages/<int:page_id>/auto-layout")
+@admin_required
+def auto_layout_page(page_id: int):
+    """
+    Автоматически расставить позиции и зависимости для страницы. Только для админов.
+    Создаёт линейную расстановку как начальную точку.
+    Ответ 200: { message, challenges_updated }
+    """
+    db = get_db()
+
+    page = db.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone()
+    if not page:
+        return jsonify({"error": "Page not found"}), 404
+
+    challenges = db.execute("""
+        SELECT id, challenge_key, node_index
+        FROM challenges
+        WHERE page_id = ?
+        ORDER BY node_index
+    """, (page_id,)).fetchall()
+
+    if not challenges:
+        return jsonify({"error": "No challenges found"}), 404
+
+    # Авто-расстановка: линейная по центру сетки
+    grid_width = 13  # Стандартная ширина сетки DBD
+    center_col = grid_width // 2
+
+    for i, challenge in enumerate(challenges):
+        grid_row = i
+        grid_col = center_col
+
+        db.execute("""
+            UPDATE challenges
+            SET grid_column = ?, grid_row = ?
+            WHERE id = ?
+        """, (grid_col, grid_row, challenge["id"]))
+
+        # Линейная зависимость: предыдущее -> текущее
+        if i > 0:
+            db.execute("""
+                INSERT OR IGNORE INTO challenge_dependencies (child_id, parent_id)
+                VALUES (?, ?)
+            """, (challenge["id"], challenges[i - 1]["id"]))
+
+    db.commit()
+    return jsonify({"message": "Auto-layout applied", "challenges_updated": len(challenges)})
+
+
+# ─── Статус выполнения ────────────────────────────────────────────────────────
+
+def is_prologue(name: str | None) -> bool:
+    return name is not None and name.lower() == "prologue"
+
+
+def is_epilogue(name: str | None) -> bool:
+    return name is not None and name.lower() == "epilogue"
+
+
+def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) -> dict:
+    """
+    Проверить выполнение страницы.
+    Страница выполнена, если есть путь от любого пролога до любого эпилога,
+    где все задания на пути выполнены.
+    """
+    # Получить все задания страницы
+    challenges = db.execute("""
+        SELECT c.id, c.name, c.challenge_key
+        FROM challenges c
+        WHERE c.page_id = ?
+    """, (page_id,)).fetchall()
+
+    if not challenges:
+        return {"is_complete": False, "reason": "no_challenges"}
+
+    challenge_ids = {c["id"] for c in challenges}
+
+    # Прологи и эпилоги
+    prologue_ids = {c["id"] for c in challenges if is_prologue(c["name"])}
+    epilogue_ids = {c["id"] for c in challenges if is_epilogue(c["name"])}
+
+    if not prologue_ids or not epilogue_ids:
+        return {"is_complete": False, "reason": "no_prologue_or_epilogue"}
+
+    # Выполненные задания
+    completed_rows = db.execute("""
+        SELECT challenge_id
+        FROM user_challenge_progress
+        WHERE user_id = ? AND completed = 1 AND challenge_id IN ({})
+    """.format(",".join("?" * len(challenge_ids))), [user_id] + list(challenge_ids)).fetchall()
+    completed_ids = {r["challenge_id"] for r in completed_rows}
+
+    # Зависимости
+    deps = db.execute("""
+        SELECT child_id, parent_id
+        FROM challenge_dependencies
+        WHERE child_id IN ({})
+    """.format(",".join("?" * len(challenge_ids))), list(challenge_ids)).fetchall()
+
+    # Построить граф: parent -> children
+    children_map: dict[int, set[int]] = {}
+    for d in deps:
+        children_map.setdefault(d["parent_id"], set()).add(d["child_id"])
+
+    # BFS от прологов к эпилогам
+    # Ищем путь, где все узлы выполнены
+    from collections import deque
+
+    for start_id in prologue_ids:
+        if start_id not in completed_ids:
+            continue  # пролог не выполнен
+
+        queue = deque([start_id])
+        visited = {start_id}
+
+        while queue:
+            current = queue.popleft()
+
+            if current in epilogue_ids:
+                return {"is_complete": True, "reason": "path_found"}
+
+            for child_id in children_map.get(current, []):
+                if child_id not in visited and child_id in completed_ids:
+                    visited.add(child_id)
+                    queue.append(child_id)
+
+    return {"is_complete": False, "reason": "no_complete_path"}
+
+
+@app.get("/api/user/tomes/<archive_key>/completion")
+@jwt_required()
+def get_tome_completion(archive_key: str):
+    """
+    Статус выполнения тома для текущего пользователя.
+    Ответ 200: { archive_key, name, is_complete, pages: [...] }
+    """
+    user_id = int(get_jwt_identity())
+    db = get_db()
+
+    tome = db.execute(
+        "SELECT id, archive_key, name FROM tomes WHERE archive_key = ?", (archive_key,)
+    ).fetchone()
+    if not tome:
+        return jsonify({"error": "Tome not found"}), 404
+
+    pages = db.execute(
+        "SELECT id, level_number FROM pages WHERE tome_id = ? ORDER BY level_number",
+        (tome["id"],)
+    ).fetchall()
+
+    pages_status = []
+    for page in pages:
+        result = check_page_completion(db, page["id"], user_id)
+        pages_status.append({
+            "page_id": page["id"],
+            "level_number": page["level_number"],
+            "is_complete": result["is_complete"],
+        })
+
+    tome_complete = all(p["is_complete"] for p in pages_status) if pages_status else False
+
+    return jsonify({
+        "archive_key": archive_key,
+        "name": tome["name"],
+        "is_complete": tome_complete,
+        "pages": pages_status,
+    })
+
+
+@app.get("/api/user/pages/<int:page_id>/completion")
+@jwt_required()
+def get_page_completion(page_id: int):
+    """
+    Статус выполнения страницы для текущего пользователя.
+    Ответ 200: { page_id, level_number, is_complete, ... }
+    """
+    user_id = int(get_jwt_identity())
+    db = get_db()
+
+    page = db.execute(
+        "SELECT p.id, p.level_number FROM pages p WHERE p.id = ?", (page_id,)
+    ).fetchone()
+    if not page:
+        return jsonify({"error": "Page not found"}), 404
+
+    result = check_page_completion(db, page_id, user_id)
+
+    return jsonify({
+        "page_id": page_id,
+        "level_number": page["level_number"],
+        "is_complete": result["is_complete"],
+        "reason": result.get("reason"),
     })
 
 

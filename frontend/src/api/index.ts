@@ -1,9 +1,13 @@
+import type { Language } from '../contexts/LanguageContext'
 import type {
   Tome,
   TomeWithPages,
   PageWithChallenges,
   Challenge,
   ProgressRecord,
+  PageDependencies,
+  TomeCompletionStatus,
+  PageCompletionStatus,
 } from '../types'
 
 const BASE = '/api'
@@ -16,8 +20,14 @@ function getHeaders(): Record<string, string> {
   }
 }
 
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+async function req<T>(method: string, path: string, body?: unknown, lang?: Language): Promise<T> {
+  // Добавляем язык в query params
+  const url = new URL(`${BASE}${path}`, window.location.origin)
+  if (lang) {
+    url.searchParams.set('lang', lang)
+  }
+
+  const res = await fetch(url.pathname + url.search, {
     method,
     headers: getHeaders(),
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -25,6 +35,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
   return data as T
+}
+
+let currentLang: Language = 'en'
+
+export function setApiLanguage(lang: Language) {
+  currentLang = lang
 }
 
 export const api = {
@@ -41,18 +57,20 @@ export const api = {
 
   getTome: (archiveKey: string) => req<TomeWithPages>('GET', `/tomes/${archiveKey}`),
 
-  getPage: (pageId: number) => req<PageWithChallenges>('GET', `/pages/${pageId}`),
+  getPage: (pageId: number) => req<PageWithChallenges>('GET', `/pages/${pageId}`, undefined, currentLang),
 
   getChallenges: (params: Record<string, string | undefined> = {}) => {
-    const qs = new URLSearchParams(
-      Object.fromEntries(
-        Object.entries(params).filter((entry): entry is [string, string] => entry[1] != null && entry[1] !== '')
-      )
-    ).toString()
-    return req<Challenge[]>('GET', `/challenges${qs ? `?${qs}` : ''}`)
+    const url = new URL('/challenges', window.location.origin)
+    url.searchParams.set('lang', currentLang)
+    Object.entries(params).forEach(([key, value]) => {
+      if (value != null && value !== '') {
+        url.searchParams.set(key, value)
+      }
+    })
+    return req<Challenge[]>('GET', url.pathname + url.search)
   },
 
-  getProgress: () => req<ProgressRecord[]>('GET', '/user/progress'),
+  getProgress: () => req<ProgressRecord[]>('GET', '/user/progress', undefined, currentLang),
 
   setProgress: (challengeKey: string, completed: boolean) =>
     req<{ challenge_key: string; completed: boolean }>(
@@ -76,4 +94,33 @@ export const api = {
     req<{ message: string; tomes: number; pages: number; challenges: number }>(
       'POST', '/admin/sync-catalog'
     ),
+
+  // Dependencies
+  getPageDependencies: (pageId: number) =>
+    req<PageDependencies>('GET', `/pages/${pageId}/dependencies`, undefined, currentLang),
+
+  // Admin: Position & Dependencies
+  adminSetChallengePosition: (challengeKey: string, gridColumn: number, gridRow: number) =>
+    req<{ challenge_key: string; grid_column: number; grid_row: number }>(
+      'PUT', `/admin/challenges/${challengeKey}/position`,
+      { grid_column: gridColumn, grid_row: gridRow }
+    ),
+
+  adminSetChallengeDependencies: (challengeKey: string, parentKeys: string[]) =>
+    req<{ challenge_key: string; parent_keys: string[] }>(
+      'POST', `/admin/challenges/${challengeKey}/dependencies`,
+      { parent_keys: parentKeys }
+    ),
+
+  adminAutoLayoutPage: (pageId: number) =>
+    req<{ message: string; challenges_updated: number }>(
+      'POST', `/admin/pages/${pageId}/auto-layout`
+    ),
+
+  // Completion status
+  getTomeCompletion: (archiveKey: string) =>
+    req<TomeCompletionStatus>('GET', `/user/tomes/${archiveKey}/completion`),
+
+  getPageCompletion: (pageId: number) =>
+    req<PageCompletionStatus>('GET', `/user/pages/${pageId}/completion`),
 }
