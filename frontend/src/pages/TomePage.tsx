@@ -21,6 +21,7 @@ import ChallengeGrid, { hasGridPositions } from '../components/ChallengeGrid'
 import ChallengeCard from '../components/ChallengeCard'
 import type { TomeWithPages, PageWithChallenges, Challenge, ChallengeStatus, Dependency, PageDependencies, PageCompletionStatus } from '../types'
 import { getNodeType } from '../types'
+import { useLanguage } from '../contexts/LanguageContext'
 
 interface Props {
   archiveKey: string | null
@@ -29,6 +30,7 @@ interface Props {
 
 export default function TomePage({ archiveKey, onBack }: Props) {
   const { isCompleted, toggleProgress } = useProgress()
+  const { t } = useLanguage()
   const [tome, setTome] = useState<TomeWithPages | null>(null)
   const [pages, setPages] = useState<PageWithChallenges[]>([])
   const [dependencies, setDependencies] = useState<Map<number, PageDependencies>>(new Map())
@@ -192,7 +194,7 @@ export default function TomePage({ archiveKey, onBack }: Props) {
               .filter(Boolean)
               .map(c => c!.name || c!.challenge_key)
               .join(', ')
-            showError(`Сначала выполните одно из заданий: ${parentNames}`)
+            showError(t('challenge.completeOneOf', { names: parentNames }))
             return
           }
         }
@@ -203,7 +205,7 @@ export default function TomePage({ archiveKey, onBack }: Props) {
         const prevChallenge = challs[idx - 1]
         const available = idx === 0 || isCompleted(prevChallenge?.challenge_key)
         if (!available) {
-          showError(`Сначала выполните задание «${prevChallenge?.name || prevChallenge?.challenge_key}»`)
+          showError(t('challenge.completeFirst', { name: prevChallenge?.name || prevChallenge?.challenge_key || '' }))
           return
         }
       }
@@ -232,7 +234,7 @@ export default function TomePage({ archiveKey, onBack }: Props) {
             .filter(Boolean)
             .map(c => `«${c!.name || c!.challenge_key}»`)
             .join(', ')
-          showError(`Сначала снимите отметку с заданий: ${names}`)
+          showError(t('challenge.unmarkFirst', { names }))
           return
         }
       } else {
@@ -242,7 +244,7 @@ export default function TomePage({ archiveKey, onBack }: Props) {
         const dependents = challs.slice(idx + 1).filter(c => isCompleted(c.challenge_key))
         if (dependents.length > 0) {
           const names = dependents.map(c => `«${c.name || c.challenge_key}»`).join(', ')
-          showError(`Сначала снимите отметку с заданий: ${names}`)
+          showError(t('challenge.unmarkFirst', { names }))
           return
         }
       }
@@ -313,7 +315,7 @@ export default function TomePage({ archiveKey, onBack }: Props) {
                       <Icon28CheckCircleOutline fill="var(--vkui--color_icon_positive)" />
                     ) : undefined}
                   >
-                    Страница {page.level_number}
+                    {t('tome.page')} {page.level_number}
                   </TabsItem>
                 )
               })}
@@ -323,10 +325,10 @@ export default function TomePage({ archiveKey, onBack }: Props) {
           <Group>
             <Header>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                Страница {currentPage?.level_number} — {realChallenges.length} заданий
+                {t('tome.pageHeader', { n: currentPage?.level_number ?? '', count: realChallenges.length })}
                 {currentCompletion?.is_complete && (
                   <Badge mode="prominent" style={{ background: '#4CAF50' }}>
-                    Выполнено
+                    {t('tome.completed')}
                   </Badge>
                 )}
               </div>
@@ -338,7 +340,7 @@ export default function TomePage({ archiveKey, onBack }: Props) {
 
               {realChallenges.length === 0 ? (
                 <Text style={{ color: 'var(--vkui--color_text_secondary)' }}>
-                  На этой странице нет заданий
+                  {t('tome.noChallenges')}
                 </Text>
               ) : useGrid ? (
                 <ChallengeGrid

@@ -32,6 +32,7 @@ import {
 } from '@vkontakte/icons'
 import { api } from '../api'
 import { useAuth } from '../contexts/AuthContext'
+import { useLanguage } from '../contexts/LanguageContext'
 import DependencyGraph from '../components/DependencyGraph'
 import type { Tome, Challenge, Dependency, PageDependencies, ChallengeInfo } from '../types'
 import { getNodeType, NODE_TYPE_COLORS } from '../types'
@@ -45,6 +46,7 @@ interface AdminUser {
 
 export default function AdminPage() {
   const { user } = useAuth()
+  const { t, lang } = useLanguage()
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [syncLoading, setSyncLoading] = useState(false)
@@ -104,7 +106,7 @@ export default function AdminPage() {
       .catch(console.error)
   }, [selectedTomeKey])
 
-  // Загрузка заданий и зависимостей при выборе страницы
+  // Загрузка заданий и зависимостей при выборе страницы или смене языка
   useEffect(() => {
     if (!selectedPageId) {
       setChallenges([])
@@ -114,7 +116,7 @@ export default function AdminPage() {
     setLoadingEditor(true)
     Promise.all([
       api.getPage(selectedPageId),
-      api.getPageDependencies(selectedPageId),
+      api.getPageDependencies(selectedPageId, lang),
     ])
       .then(([pageData, depsData]) => {
         setChallenges(depsData.challenges)
@@ -122,7 +124,7 @@ export default function AdminPage() {
       })
       .catch(console.error)
       .finally(() => setLoadingEditor(false))
-  }, [selectedPageId])
+  }, [selectedPageId, lang])
 
   const showError = (msg: string) => {
     setSnackbar(
@@ -163,8 +165,8 @@ export default function AdminPage() {
     setSyncResult(null)
     try {
       const res = await api.adminSyncCatalog()
-      setSyncResult(`Синхронизировано: ${res.tomes} томов, ${res.pages} страниц, ${res.challenges} заданий`)
-      showSuccess('Каталог успешно синхронизирован')
+      setSyncResult(t('admin.syncResultText', { tomes: res.tomes, pages: res.pages, challenges: res.challenges }))
+      showSuccess(t('admin.syncSuccess'))
     } catch (err) {
       showError((err as Error).message)
     } finally {
@@ -181,7 +183,7 @@ export default function AdminPage() {
       // Перезагрузить данные
       const [pageData, depsData] = await Promise.all([
         api.getPage(selectedPageId),
-        api.getPageDependencies(selectedPageId),
+        api.getPageDependencies(selectedPageId, lang),
       ])
       setChallenges(depsData.challenges)
       setDependencies(depsData.dependencies)
@@ -218,7 +220,7 @@ export default function AdminPage() {
         ...newDeps,
       ])
       setSelectedChallenge(null)
-      showSuccess('Зависимости сохранены')
+      showSuccess(t('admin.depsSaved'))
     } catch (err) {
       showError((err as Error).message)
     }
@@ -262,21 +264,21 @@ export default function AdminPage() {
             before={<PanelHeaderButton onClick={() => setSelectedChallenge(null)}><Icon28CancelOutline /></PanelHeaderButton>}
             after={<PanelHeaderButton onClick={saveDependencies}><Icon28DoneOutline /></PanelHeaderButton>}
           >
-            Зависимости
+            {t('admin.deps.dependencies')}
           </ModalPageHeader>
         }
       >
         <Div>
           <Text style={{ marginBottom: 16, color: 'var(--vkui--color_text_secondary)' }}>
-            Задание: <strong>{selectedChallenge?.name || selectedChallenge?.challenge_key}</strong>
+            {t('admin.deps.challenge')}: <strong>{selectedChallenge?.name || selectedChallenge?.challenge_key}</strong>
           </Text>
 
           <Text style={{ marginBottom: 8, fontWeight: 600 }}>
-            Текущие родители ({selectedParents.length}):
+            {t('admin.deps.currentParents', { n: selectedParents.length })}
           </Text>
           {selectedParents.length === 0 ? (
             <Text style={{ color: 'var(--vkui--color_text_secondary)', marginBottom: 16 }}>
-              Нет родителей (точка входа)
+              {t('admin.deps.noParents')}
             </Text>
           ) : (
             <div style={{ marginBottom: 16 }}>
@@ -304,11 +306,11 @@ export default function AdminPage() {
           )}
 
           <Text style={{ marginBottom: 8, fontWeight: 600 }}>
-            Текущие дети ({selectedChildren.length}):
+            {t('admin.deps.currentChildren', { n: selectedChildren.length })}
           </Text>
           {selectedChildren.length === 0 ? (
             <Text style={{ color: 'var(--vkui--color_text_secondary)', marginBottom: 16 }}>
-              Нет детей
+              {t('admin.deps.noChildren')}
             </Text>
           ) : (
             <div style={{ marginBottom: 16 }}>
@@ -326,7 +328,7 @@ export default function AdminPage() {
           )}
 
           <Text style={{ marginBottom: 8, fontWeight: 600 }}>
-            Выберите родителей:
+            {t('admin.deps.selectParents')}
           </Text>
           <div style={{ maxHeight: 300, overflowY: 'auto' }}>
             {challenges
@@ -365,16 +367,16 @@ export default function AdminPage() {
 
   return (
     <>
-      <PanelHeader>Админ-панель</PanelHeader>
+      <PanelHeader>{t('admin.title')}</PanelHeader>
 
-      <Group header={<Header>Синхронизация каталога</Header>}>
+      <Group header={<Header>{t('admin.sync')}</Header>}>
         <Div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <Text style={{ color: 'var(--vkui--color_text_secondary)' }}>
-            Загружает актуальные данные с dbd.tricky.lol и сохраняет в базу.
+            {t('admin.syncDesc')}
           </Text>
           {syncResult && (
             <Banner
-              title="Результат"
+              title={t('admin.syncResult')}
               subtitle={syncResult}
             />
           )}
@@ -385,30 +387,30 @@ export default function AdminPage() {
             before={<Icon28SyncOutline />}
             onClick={handleSync}
           >
-            Запустить синхронизацию
+            {t('admin.syncBtn')}
           </Button>
         </Div>
       </Group>
 
-      <Group header={<Header>Редактор зависимостей</Header>}>
+      <Group header={<Header>{t('admin.deps.title')}</Header>}>
         <Div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <FormItem top="Том">
+          <FormItem top={t('admin.deps.tome')}>
             <Select
               value={selectedTomeKey}
               onChange={(e) => setSelectedTomeKey(e.target.value)}
               options={[
-                { value: '', label: 'Выберите том' },
-                ...tomes.map(t => ({ value: t.archive_key, label: t.name || t.archive_key }))
+                { value: '', label: t('admin.deps.selectTome') },
+                ...tomes.map(tome => ({ value: tome.archive_key, label: tome.name || tome.archive_key }))
               ]}
             />
           </FormItem>
 
           {pages.length > 0 && (
-            <FormItem top="Страница">
+            <FormItem top={t('admin.deps.page')}>
               <Select
                 value={selectedPageId?.toString() || ''}
                 onChange={(e) => setSelectedPageId(Number(e.target.value))}
-                options={pages.map(p => ({ value: p.id.toString(), label: `Страница ${p.level_number}` }))}
+                options={pages.map(p => ({ value: p.id.toString(), label: `${t('tome.page')} ${p.level_number}` }))}
               />
             </FormItem>
           )}
@@ -419,7 +421,7 @@ export default function AdminPage() {
               stretched
               onClick={handleAutoLayout}
             >
-              Авто-расстановка (линейная)
+              {t('admin.deps.autoLayout')}
             </Button>
           )}
 
@@ -432,7 +434,7 @@ export default function AdminPage() {
               {/* Граф зависимостей */}
               <div style={{ marginTop: 16 }}>
                 <Text style={{ color: 'var(--vkui--color_text_secondary)', marginBottom: 8 }}>
-                  Кликните на узел для редактирования зависимостей:
+                  {t('admin.deps.clickToEdit')}
                 </Text>
                 <DependencyGraph
                   challenges={challenges}
@@ -448,7 +450,7 @@ export default function AdminPage() {
               <Search
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Поиск по названию или описанию"
+                placeholder={t('admin.deps.search')}
               />
 
               <div style={{ maxHeight: 300, overflowY: 'auto' }}>
@@ -502,13 +504,13 @@ export default function AdminPage() {
             </>
           ) : selectedPageId ? (
             <Text style={{ color: 'var(--vkui--color_text_secondary)' }}>
-              Нет заданий на этой странице
+              {t('admin.deps.noChallenges')}
             </Text>
           ) : null}
         </Div>
       </Group>
 
-      <Group header={<Header>Пользователи</Header>}>
+      <Group header={<Header>{t('admin.users')}</Header>}>
         {loadingUsers ? (
           <Div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}>
             <Spinner />
@@ -517,7 +519,7 @@ export default function AdminPage() {
           users.map(u => (
             <SimpleCell
               key={u.id}
-              subtitle={u.is_admin ? 'Администратор' : 'Пользователь'}
+              subtitle={u.is_admin ? t('admin.userAdmin') : t('admin.userRegular')}
               after={
                 <Switch
                   checked={u.is_admin}

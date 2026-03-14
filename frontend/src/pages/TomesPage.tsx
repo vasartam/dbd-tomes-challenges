@@ -12,6 +12,7 @@ import {
 import { Icon28DoorArrowLeftOutline } from '@vkontakte/icons'
 import { api } from '../api'
 import { useAuth } from '../contexts/AuthContext'
+import { useLanguage } from '../contexts/LanguageContext'
 import type { Tome } from '../types'
 
 function formatDate(ts: number | null | undefined): string | null {
@@ -25,6 +26,7 @@ interface Props {
 
 export default function TomesPage({ onTomeClick }: Props) {
   const { logout } = useAuth()
+  const { t } = useLanguage()
   const [tomes, setTomes] = useState<Tome[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -39,12 +41,12 @@ export default function TomesPage({ onTomeClick }: Props) {
     <>
       <PanelHeader
         after={
-          <PanelHeaderButton onClick={logout} label="Выйти">
+          <PanelHeaderButton onClick={logout} label={t('nav.logout')}>
             <Icon28DoorArrowLeftOutline />
           </PanelHeaderButton>
         }
       >
-        Тома архивов
+        {t('tomes.title')}
       </PanelHeader>
 
       {loading ? (
@@ -54,17 +56,17 @@ export default function TomesPage({ onTomeClick }: Props) {
       ) : tomes.length === 0 ? (
         <Div>
           <Text style={{ textAlign: 'center', color: 'var(--vkui--color_text_secondary)', padding: 16 }}>
-            Каталог пуст. Запустите синхронизацию через POST /api/admin/sync-catalog
+            {t('tomes.empty')}
           </Text>
         </Div>
       ) : (
         <Group>
-          <Header>Все тома</Header>
+          <Header>{t('tomes.allTomes')}</Header>
           {tomes.map(tome => (
             <SimpleCell
               key={tome.archive_key}
               onClick={() => onTomeClick(tome.archive_key)}
-              subtitle={formatDate(tome.start_ts) ?? 'Постоянный контент'}
+              subtitle={formatDate(tome.start_ts) ?? t('tomes.permanent')}
               chevron="auto"
             >
               {tome.name || tome.archive_key}

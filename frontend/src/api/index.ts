@@ -37,7 +37,13 @@ async function req<T>(method: string, path: string, body?: unknown, lang?: Langu
   return data as T
 }
 
-let currentLang: Language = 'en'
+function getInitialLang(): Language {
+  const stored = localStorage.getItem('app_language')
+  if (stored === 'en' || stored === 'ru') return stored as Language
+  return navigator.language.toLowerCase().startsWith('ru') ? 'ru' : 'en'
+}
+
+let currentLang: Language = getInitialLang()
 
 export function setApiLanguage(lang: Language) {
   currentLang = lang
@@ -96,8 +102,8 @@ export const api = {
     ),
 
   // Dependencies
-  getPageDependencies: (pageId: number) =>
-    req<PageDependencies>('GET', `/pages/${pageId}/dependencies`, undefined, currentLang),
+  getPageDependencies: (pageId: number, lang?: Language) =>
+    req<PageDependencies>('GET', `/pages/${pageId}/dependencies`, undefined, lang ?? currentLang),
 
   // Admin: Position & Dependencies
   adminSetChallengePosition: (challengeKey: string, gridColumn: number, gridRow: number) =>

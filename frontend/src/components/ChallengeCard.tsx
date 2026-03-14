@@ -10,12 +10,7 @@ import {
 } from '@vkontakte/icons'
 import type { Challenge, ChallengeStatus, ChallengeNodeType } from '../types'
 import { getNodeType } from '../types'
-
-const ROLE_LABELS: Record<string, string> = {
-  survivor: 'Выживший',
-  killer: 'Убийца',
-  shared: 'Любой',
-}
+import { useLanguage } from '../contexts/LanguageContext'
 
 const ROLE_COLORS: Record<string, string> = {
   survivor: '#4CAF50',
@@ -24,17 +19,10 @@ const ROLE_COLORS: Record<string, string> = {
 }
 
 const NODE_TYPE_COLORS: Record<ChallengeNodeType, string> = {
-  prologue: '#9C27B0',  // фиолетовый
-  epilogue: '#FF9800', // оранжевый
-  reward: '#FFD700',   // золотой
-  challenge: '#2196F3', // синий (default)
-}
-
-const NODE_TYPE_LABELS: Record<ChallengeNodeType, string> = {
-  prologue: 'Пролог',
-  epilogue: 'Эпилог',
-  reward: 'Награда',
-  challenge: '',
+  prologue: '#9C27B0',
+  epilogue: '#FF9800',
+  reward: '#FFD700',
+  challenge: '#2196F3',
 }
 
 function stripHtml(html: string): string {
@@ -46,10 +34,11 @@ interface Props {
   status: ChallengeStatus
   subtitle?: string
   onClick: () => void
-  compact?: boolean // компактный режим для прологов/эпилогов
+  compact?: boolean
 }
 
 export default function ChallengeCard({ challenge, status, subtitle, onClick, compact }: Props) {
+  const { t } = useLanguage()
   const isLocked = status === 'locked'
   const isDone = status === 'completed'
   const nodeType = getNodeType(challenge.name)
@@ -57,9 +46,22 @@ export default function ChallengeCard({ challenge, status, subtitle, onClick, co
 
   const nodeColor = NODE_TYPE_COLORS[nodeType]
   const roleColor = ROLE_COLORS[challenge.role] ?? '#9E9E9E'
-  const roleLabel = ROLE_LABELS[challenge.role] ?? (challenge.role || '?')
+  const roleLabel = challenge.role === 'survivor'
+    ? t('challenge.survivor')
+    : challenge.role === 'killer'
+      ? t('challenge.killer')
+      : challenge.role === 'shared'
+        ? t('challenge.shared')
+        : (challenge.role || '?')
 
-  // Иконка в зависимости от типа
+  const nodeTypeLabel = nodeType === 'prologue'
+    ? t('challenge.prologue')
+    : nodeType === 'epilogue'
+      ? t('challenge.epilogue')
+      : nodeType === 'reward'
+        ? t('challenge.reward')
+        : ''
+
   const renderIcon = () => {
     if (isDone) {
       return <Icon24CheckCircleOutline fill="var(--vkui--color_icon_positive)" />
@@ -79,7 +81,6 @@ export default function ChallengeCard({ challenge, status, subtitle, onClick, co
     }
   }
 
-  // Компактный режим для прологов/эпилогов
   if (compact || isSpecialNode) {
     return (
       <Card
@@ -102,7 +103,7 @@ export default function ChallengeCard({ challenge, status, subtitle, onClick, co
               color: isDone ? 'var(--vkui--color_text_contrast)' : nodeColor,
             }}
           >
-            {NODE_TYPE_LABELS[nodeType] || challenge.name || challenge.challenge_key}
+            {nodeTypeLabel || challenge.name || challenge.challenge_key}
           </Text>
           {isDone && (
             <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--vkui--color_text_contrast)' }}>

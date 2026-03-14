@@ -13,30 +13,32 @@ import {
 import { Icon28CancelCircleOutline } from '@vkontakte/icons'
 import { api } from '../api'
 import { useProgress } from '../contexts/ProgressContext'
+import { useLanguage } from '../contexts/LanguageContext'
 import ChallengeCard from '../components/ChallengeCard'
 import type { Challenge } from '../types'
 
-const ROLE_OPTIONS = [
-  { label: 'Все роли', value: '' },
-  { label: 'Выживший', value: 'survivor' },
-  { label: 'Убийца', value: 'killer' },
-  { label: 'Любой', value: 'shared' },
-]
-
-const STATUS_OPTIONS = [
-  { label: 'Все', value: 'all' },
-  { label: 'Доступные', value: 'available' },
-  { label: 'Выполненные', value: 'completed' },
-]
-
 export default function SearchPage() {
   const { isCompleted, toggleProgress } = useProgress()
+  const { t } = useLanguage()
   const [query, setQuery] = useState('')
   const [role, setRole] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [challenges, setChallenges] = useState<Challenge[]>([])
   const [loading, setLoading] = useState(false)
   const [snackbar, setSnackbar] = useState<React.ReactNode>(null)
+
+  const ROLE_OPTIONS = [
+    { label: t('search.filters.allRoles'), value: '' },
+    { label: t('challenge.survivor'), value: 'survivor' },
+    { label: t('challenge.killer'), value: 'killer' },
+    { label: t('challenge.shared'), value: 'shared' },
+  ]
+
+  const STATUS_OPTIONS = [
+    { label: t('search.filters.all'), value: 'all' },
+    { label: t('search.filters.available'), value: 'available' },
+    { label: t('search.filters.completed'), value: 'completed' },
+  ]
 
   const showError = (msg: string) => {
     setSnackbar(
@@ -81,13 +83,13 @@ export default function SearchPage() {
 
   return (
     <>
-      <PanelHeader>Поиск заданий</PanelHeader>
+      <PanelHeader>{t('search.title')}</PanelHeader>
 
       <Group>
         <Search
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Название или описание..."
+          placeholder={t('search.placeholder')}
         />
         <Div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <SegmentedControl
@@ -107,7 +109,7 @@ export default function SearchPage() {
 
       <Group>
         <Header>
-          {loading ? 'Поиск...' : `Найдено: ${filtered.length}`}
+          {loading ? t('search.searching') : t('search.found', { n: filtered.length })}
         </Header>
 
         {loading ? (
@@ -122,7 +124,7 @@ export default function SearchPage() {
                 <ChallengeCard
                   challenge={challenge}
                   status={isCompleted(challenge.challenge_key) ? 'completed' : 'available'}
-                  subtitle={`${challenge.tome_name || challenge.archive_key} · Стр. ${challenge.level_number}`}
+                  subtitle={`${challenge.tome_name || challenge.archive_key} · ${t('search.page')} ${challenge.level_number}`}
                   onClick={() => handleToggle(challenge)}
                 />
               </React.Fragment>
@@ -130,7 +132,7 @@ export default function SearchPage() {
             {filtered.length === 0 && !loading && (
               <Div>
                 <Text style={{ textAlign: 'center', color: 'var(--vkui--color_text_secondary)' }}>
-                  Ничего не найдено
+                  {t('search.noResults')}
                 </Text>
               </Div>
             )}

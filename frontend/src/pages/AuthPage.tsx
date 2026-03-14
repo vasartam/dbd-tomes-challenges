@@ -13,11 +13,13 @@ import {
   Text,
 } from '@vkontakte/vkui'
 import { useAuth } from '../contexts/AuthContext'
+import { useLanguage } from '../contexts/LanguageContext'
 
 type Mode = 'login' | 'register'
 
 export default function AuthPage() {
   const { login, register } = useAuth()
+  const { t } = useLanguage()
   const [mode, setMode] = useState<Mode>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -54,7 +56,7 @@ export default function AuthPage() {
       <Group>
         <Div style={{ textAlign: 'center', paddingTop: 16, paddingBottom: 8 }}>
           <Title level="2" style={{ marginBottom: 6 }}>
-            Трекер заданий архивов
+            {t('auth.title')}
           </Title>
           <Text style={{ color: 'var(--vkui--color_text_secondary)' }}>
             Dead by Daylight
@@ -63,15 +65,15 @@ export default function AuthPage() {
 
         <Tabs>
           <TabsItem selected={mode === 'login'} onClick={() => switchMode('login')}>
-            Войти
+            {t('auth.login')}
           </TabsItem>
           <TabsItem selected={mode === 'register'} onClick={() => switchMode('register')}>
-            Регистрация
+            {t('auth.register')}
           </TabsItem>
         </Tabs>
 
         <form onSubmit={handleSubmit}>
-          <FormItem top="Никнейм">
+          <FormItem top={t('auth.username')}>
             <Input
               value={username}
               onChange={e => setUsername(e.target.value)}
@@ -80,9 +82,9 @@ export default function AuthPage() {
             />
           </FormItem>
           <FormItem
-            top="Пароль"
+            top={t('auth.password')}
             status={error ? 'error' : 'default'}
-            bottom={error || (mode === 'register' ? 'Минимум 6 символов' : undefined)}
+            bottom={error || (mode === 'register' ? t('auth.minPassword') : undefined)}
           >
             <Input
               type="password"
@@ -100,7 +102,7 @@ export default function AuthPage() {
               loading={loading}
               disabled={!username || !password}
             >
-              {mode === 'login' ? 'Войти' : 'Зарегистрироваться'}
+              {mode === 'login' ? t('auth.loginBtn') : t('auth.registerBtn')}
             </Button>
           </FormItem>
         </form>
