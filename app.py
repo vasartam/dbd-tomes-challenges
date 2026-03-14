@@ -5,21 +5,26 @@ Flask + SQLite3 + JWT-аутентификация.
 
 Данные каталога: dbd.tricky.lol/api/archives (публичный API, авторизация не нужна).
 
-Запуск:
-    pip install -r requirements.txt
+Запуск (development):
     python app.py
 
-Переменные окружения:
-    JWT_SECRET_KEY  — секрет для подписи токенов (по умолчанию небезопасная строка)
-    DB_PATH         — путь к файлу SQLite  (по умолчанию db.sqlite)
-    PORT            — порт сервера         (по умолчанию 5000)
+Запуск (production):
+    APP_ENV=production python app.py
+
+Переменные окружения (задаются в файле .env):
+    APP_ENV        — режим запуска: development (по умолчанию) или production
+    JWT_SECRET_KEY — секрет для подписи JWT-токенов
+    DB_PATH        — путь к файлу SQLite
+    PORT           — порт сервера
 """
 
 import json
 import os
 import re
 import sqlite3
+import sys
 from datetime import timedelta
+from functools import wraps
 
 import requests
 from dotenv import load_dotenv
@@ -78,6 +83,7 @@ def init_db():
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             username      TEXT    NOT NULL UNIQUE,
             password_hash TEXT    NOT NULL,
+            is_admin      INTEGER NOT NULL DEFAULT 0,
             created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -126,6 +132,13 @@ def init_db():
             UNIQUE(user_id, challenge_id)
         );
     """)
+    # Миграция: добавить is_admin, если колонки ещё нет (БД из старой версии)
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # колонка уже существует
+
     conn.commit()
     conn.close()
 
@@ -147,6 +160,20 @@ def row_to_dict(row) -> dict | None:
 
 def validate_username(username: str) -> bool:
     return bool(NICKNAME_RE.match(username))
+
+
+def admin_required(fn):
+    """Декоратор: JWT обязателен, пользователь должен быть админом."""
+    @wraps(fn)
+    @jwt_required()
+    def wrapper(*args, **kwargs):
+        user_id = int(get_jwt_identity())
+        db = get_db()
+        row = db.execute("SELECT is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row or not row["is_admin"]:
+            return jsonify({"error": "Admin access required"}), 403
+        return fn(*args, **kwargs)
+    return wrapper
 
 
 # ─── Авторизация ──────────────────────────────────────────────────────────────
@@ -224,7 +251,7 @@ def get_profile():
     user_id = int(get_jwt_identity())
     db = get_db()
     row = db.execute(
-        "SELECT id, username, created_at FROM users WHERE id = ?", (user_id,)
+        "SELECT id, username, is_admin, created_at FROM users WHERE id = ?", (user_id,)
     ).fetchone()
     if not row:
         return jsonify({"error": "User not found"}), 404
@@ -414,7 +441,45 @@ def set_progress(challenge_key: str):
 
 # ─── Синхронизация каталога ───────────────────────────────────────────────────
 
+@app.get("/api/admin/users")
+@admin_required
+def list_users():
+    """
+    Список всех пользователей. Только для админов.
+    Ответ 200: [ { id, username, is_admin, created_at }, ... ]
+    """
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, username, is_admin, created_at FROM users ORDER BY id"
+    ).fetchall()
+    return jsonify([row_to_dict(r) for r in rows])
+
+
+@app.post("/api/admin/users/<int:user_id>/toggle-admin")
+@admin_required
+def toggle_admin(user_id: int):
+    """
+    Выдать или забрать права администратора. Только для админов.
+    Нельзя снять права с самого себя.
+    Ответ 200: { id, username, is_admin }
+    """
+    current_user_id = int(get_jwt_identity())
+    if current_user_id == user_id:
+        return jsonify({"error": "Cannot change your own admin status"}), 400
+
+    db = get_db()
+    row = db.execute("SELECT id, username, is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+    if not row:
+        return jsonify({"error": "User not found"}), 404
+
+    new_status = 0 if row["is_admin"] else 1
+    db.execute("UPDATE users SET is_admin = ? WHERE id = ?", (new_status, user_id))
+    db.commit()
+    return jsonify({"id": user_id, "username": row["username"], "is_admin": bool(new_status)})
+
+
 @app.post("/api/admin/sync-catalog")
+@admin_required
 def sync_catalog():
     """
     Загрузить полный каталог томов с dbd.tricky.lol и сохранить в БД.
@@ -546,7 +611,40 @@ def sync_catalog():
 
 # ─── Точка входа ──────────────────────────────────────────────────────────────
 
+def make_admin(username: str):
+    """Назначить пользователя администратором (CLI-утилита)."""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+    if not row:
+        print(f"Пользователь '{username}' не найден.")
+        conn.close()
+        sys.exit(1)
+    conn.execute("UPDATE users SET is_admin = 1 WHERE username = ?", (username,))
+    conn.commit()
+    conn.close()
+    print(f"Пользователь '{username}' теперь администратор.")
+
+
 if __name__ == "__main__":
     init_db()
+
+    # python app.py --make-admin <username>
+    if "--make-admin" in sys.argv:
+        idx = sys.argv.index("--make-admin")
+        if idx + 1 >= len(sys.argv):
+            print("Укажите имя пользователя: python app.py --make-admin <username>")
+            sys.exit(1)
+        make_admin(sys.argv[idx + 1])
+        sys.exit(0)
+
     port = int(os.environ["PORT"])
-    app.run(debug=True, host="0.0.0.0", port=port)
+    env = os.environ.get("APP_ENV", "development")
+
+    if env == "production":
+        from waitress import serve
+        print(f"Starting production server on http://0.0.0.0:{port}")
+        serve(app, host="0.0.0.0", port=port)
+    else:
+        print(f"Starting development server on http://0.0.0.0:{port}")
+        app.run(debug=True, host="0.0.0.0", port=port)
