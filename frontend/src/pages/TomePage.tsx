@@ -16,13 +16,12 @@ import {
 import { Icon28CancelCircleOutline, Icon28CheckCircleOutline } from '@vkontakte/icons'
 import { observer } from 'mobx-react-lite'
 import { catalogStore, progressStore, langStore } from '../stores'
-import ChallengeTree from '../components/ChallengeTree'
-import ChallengeGrid, { hasGridPositions } from '../components/ChallengeGrid'
-import ChallengeCard from '../components/ChallengeCard'
+import DependencyGraph from '../components/DependencyGraph'
 import type {
   TomeWithPages,
   PageWithChallenges,
   Challenge,
+  ChallengeInfo,
   ChallengeStatus,
   PageDependencies,
   PageCompletionStatus,
@@ -31,10 +30,12 @@ import { getNodeType } from '../types'
 
 interface Props {
   archiveKey: string
+  // level_number страницы из URL (для восстановления при обновлении)
+  initialPageLevel?: number
   onBack: () => void
 }
 
-export default observer(function TomePage({ archiveKey, onBack }: Props) {
+export default observer(function TomePage({ archiveKey, initialPageLevel, onBack }: Props) {
   const t = (key: string, vars?: Record<string, string | number>) => langStore.t(key, vars)
   const lang = langStore.lang
 
@@ -50,6 +51,17 @@ export default observer(function TomePage({ archiveKey, onBack }: Props) {
     progressStore.load()
   }, [])
 
+  // Синхронизируем URL при смене активной страницы
+  useEffect(() => {
+    if (!archiveKey || pages.length === 0) return
+    const level = pages[activePage]?.level_number
+    if (level == null) return
+    const target = pages.length > 1
+      ? `/tomes/${archiveKey}/${level}`
+      : `/tomes/${archiveKey}`
+    window.history.replaceState(null, '', target)
+  }, [activePage, archiveKey, pages])
+
   useEffect(() => {
     if (!archiveKey) return
     setLoading(true)
@@ -64,6 +76,12 @@ export default observer(function TomePage({ archiveKey, onBack }: Props) {
           tomeData.pages.map(page => catalogStore.loadPage(page.id))
         )
         setPages(pagesWithChallenges)
+
+        // Восстанавливаем активную страницу из URL
+        if (initialPageLevel != null) {
+          const idx = pagesWithChallenges.findIndex(p => p.level_number === initialPageLevel)
+          if (idx >= 0) setActivePage(idx)
+        }
 
         const depsMap = new Map<number, PageDependencies>()
         const completionMap = new Map<number, PageCompletionStatus>()
@@ -104,54 +122,50 @@ export default observer(function TomePage({ archiveKey, onBack }: Props) {
   const currentDeps = currentPage ? dependencies.get(currentPage.id) : null
   const currentCompletion = currentPage ? pageCompletion.get(currentPage.id) : null
 
-  const { prologues, epilogues, challenges: realChallenges } = useMemo(() => {
-    if (!currentPage?.challenges) return { prologues: [], epilogues: [], challenges: [] }
-
-    const prologues: Challenge[] = []
-    const epilogues: Challenge[] = []
-    const challenges: Challenge[] = []
-
-    for (const c of currentPage.challenges) {
-      const type = getNodeType(c.name)
-      if (type === 'prologue') prologues.push(c)
-      else if (type === 'epilogue') epilogues.push(c)
-      else if (type === 'challenge') challenges.push(c)
-    }
-
-    return { prologues, epilogues, challenges }
+  // Для обратной совместимости (линейный режим без позиций): обычные задания без пролога/эпилога
+  const realChallenges = useMemo(() => {
+    if (!currentPage?.challenges) return []
+    return currentPage.challenges.filter(c => getNodeType(c.name) === 'challenge')
   }, [currentPage?.challenges])
 
-  const useGrid = useMemo(() => {
-    return currentPage?.challenges ? hasGridPositions(currentPage.challenges) : false
-  }, [currentPage?.challenges])
+  // Используем ChallengeInfo из deps (содержат позиции) для графа
+  const graphChallenges = currentDeps?.challenges ?? []
+  const useGraph = graphChallenges.length > 0
 
-  const getParents = (challengeId: number): number[] => {
+  const getLinked = (challengeId: number): number[] => {
     if (!currentDeps) return []
-    return currentDeps.dependencies
-      .filter(d => d.child_id === challengeId)
-      .map(d => d.parent_id)
+    return currentDeps.dependencies.flatMap(d => {
+      if (d.a_id === challengeId) return [d.b_id]
+      if (d.b_id === challengeId) return [d.a_id]
+      return []
+    })
   }
 
-  const getChildren = (challengeId: number): number[] => {
-    if (!currentDeps) return []
-    return currentDeps.dependencies
-      .filter(d => d.parent_id === challengeId)
-      .map(d => d.child_id)
-  }
+  // Ищем задание в deps (ChallengeInfo) или в challenges страницы (Challenge)
+  const findChallenge = (id: number): ChallengeInfo | undefined =>
+    graphChallenges.find(c => c.id === id) ?? currentPage?.challenges.find(c => c.id === id)
 
-  const getStatus = (challenge: Challenge): ChallengeStatus => {
+  const getStatus = (challenge: ChallengeInfo): ChallengeStatus => {
     if (progressStore.isCompleted(challenge.challenge_key)) return 'completed'
 
-    if (getNodeType(challenge.name) === 'prologue') return 'available'
+    if (getNodeType(challenge.name) === 'prologue') {
+      // На первой странице пролог всегда доступен
+      if (activePage === 0) return 'available'
+      // На остальных — доступен, если выполнен хотя бы один эпилог предыдущей страницы
+      const prevPage = pages[activePage - 1]
+      const prevEpilogues = prevPage?.challenges.filter(c => getNodeType(c.name) === 'epilogue') ?? []
+      const prevCompleted = prevEpilogues.some(c => progressStore.isCompleted(c.challenge_key))
+      return prevCompleted ? 'available' : 'locked'
+    }
 
-    if (useGrid && currentDeps) {
-      const parents = getParents(challenge.id)
-      if (parents.length === 0) return 'available'
-      const hasCompletedParent = parents.some(parentId => {
-        const parentChallenge = currentPage?.challenges.find(c => c.id === parentId)
-        return parentChallenge && progressStore.isCompleted(parentChallenge.challenge_key)
+    if (useGraph && currentDeps) {
+      const linked = getLinked(challenge.id)
+      if (linked.length === 0) return 'available'
+      const hasCompletedNeighbor = linked.some(neighborId => {
+        const neighbor = findChallenge(neighborId)
+        return neighbor && progressStore.isCompleted(neighbor.challenge_key)
       })
-      return hasCompletedParent ? 'available' : 'locked'
+      return hasCompletedNeighbor ? 'available' : 'locked'
     }
 
     const challs = realChallenges
@@ -160,7 +174,7 @@ export default observer(function TomePage({ archiveKey, onBack }: Props) {
     return 'locked'
   }
 
-  const handleChallengeClick = async (challenge: Challenge) => {
+  const handleChallengeClick = async (challenge: ChallengeInfo) => {
     const done = progressStore.isCompleted(challenge.challenge_key)
     const nodeType = getNodeType(challenge.name)
 
@@ -178,20 +192,20 @@ export default observer(function TomePage({ archiveKey, onBack }: Props) {
     }
 
     if (!done) {
-      if (useGrid && currentDeps) {
-        const parents = getParents(challenge.id)
-        if (parents.length > 0) {
-          const hasCompletedParent = parents.some(parentId => {
-            const parentChallenge = currentPage?.challenges.find(c => c.id === parentId)
-            return parentChallenge && progressStore.isCompleted(parentChallenge.challenge_key)
+      if (useGraph && currentDeps) {
+        const linked = getLinked(challenge.id)
+        if (linked.length > 0) {
+          const hasCompletedNeighbor = linked.some(neighborId => {
+            const neighbor = findChallenge(neighborId)
+            return neighbor && progressStore.isCompleted(neighbor.challenge_key)
           })
-          if (!hasCompletedParent) {
-            const parentNames = parents
-              .map(pid => currentPage?.challenges.find(c => c.id === pid))
+          if (!hasCompletedNeighbor) {
+            const neighborNames = linked
+              .map(nid => findChallenge(nid))
               .filter(Boolean)
               .map(c => c!.name || c!.challenge_key)
               .join(', ')
-            showError(t('challenge.completeOneOf', { names: parentNames }))
+            showError(t('challenge.completeOneOf', { names: neighborNames }))
             return
           }
         }
@@ -216,15 +230,22 @@ export default observer(function TomePage({ archiveKey, onBack }: Props) {
         showError((e as Error).message)
       }
     } else {
-      if (useGrid && currentDeps) {
-        const children = getChildren(challenge.id)
-        const completedChildren = children.filter(childId => {
-          const childChallenge = currentPage?.challenges.find(c => c.id === childId)
-          return childChallenge && progressStore.isCompleted(childChallenge.challenge_key)
+      if (useGraph && currentDeps) {
+        const linked = getLinked(challenge.id)
+        const wouldBlock = linked.filter(neighborId => {
+          const neighbor = findChallenge(neighborId)
+          if (!neighbor || !progressStore.isCompleted(neighbor.challenge_key)) return false
+          const neighborLinked = getLinked(neighborId)
+          const otherCompleted = neighborLinked.filter(otherId => {
+            if (otherId === challenge.id) return false
+            const other = findChallenge(otherId)
+            return other && progressStore.isCompleted(other.challenge_key)
+          })
+          return otherCompleted.length === 0
         })
-        if (completedChildren.length > 0) {
-          const names = completedChildren
-            .map(cid => currentPage?.challenges.find(c => c.id === cid))
+        if (wouldBlock.length > 0) {
+          const names = wouldBlock
+            .map(nid => findChallenge(nid))
             .filter(Boolean)
             .map(c => `«${c!.name || c!.challenge_key}»`)
             .join(', ')
@@ -253,21 +274,6 @@ export default observer(function TomePage({ archiveKey, onBack }: Props) {
       }
     }
   }
-
-  const renderSpecialNodes = () => (
-    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-      {[...prologues, ...epilogues].map(c => (
-        <div key={c.challenge_key} style={{ width: 140 }}>
-          <ChallengeCard
-            challenge={c}
-            status={getStatus(c)}
-            onClick={() => handleChallengeClick(c)}
-            compact
-          />
-        </div>
-      ))}
-    </div>
-  )
 
   return (
     <>
@@ -313,23 +319,16 @@ export default observer(function TomePage({ archiveKey, onBack }: Props) {
               </div>
             </Header>
 
-            <Div style={{ paddingBottom: 72, overflowX: 'auto' }}>
-              {(prologues.length > 0 || epilogues.length > 0) && renderSpecialNodes()}
-
-              {realChallenges.length === 0 ? (
+            <Div style={{ paddingBottom: 72 }}>
+              {graphChallenges.length === 0 ? (
                 <Text style={{ color: 'var(--vkui--color_text_secondary)' }}>
                   {t('tome.noChallenges')}
                 </Text>
-              ) : useGrid ? (
-                <ChallengeGrid
-                  challenges={realChallenges}
-                  dependencies={currentDeps?.dependencies ?? []}
-                  getStatus={getStatus}
-                  onChallengeClick={handleChallengeClick}
-                />
               ) : (
-                <ChallengeTree
-                  challenges={realChallenges}
+                <DependencyGraph
+                  challenges={graphChallenges}
+                  dependencies={currentDeps?.dependencies ?? []}
+                  mode="view"
                   getStatus={getStatus}
                   onChallengeClick={handleChallengeClick}
                 />

@@ -1,0 +1,14 @@
+[Unit]
+Description=DBD Tomes Challenges — Flask backend
+After=network.target
+
+[Service]
+User=dbd
+WorkingDirectory=/srv/dbd-tomes-challenges
+EnvironmentFile=/srv/dbd-tomes-challenges/.env
+ExecStart=/srv/dbd-tomes-challenges/venv/bin/python app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

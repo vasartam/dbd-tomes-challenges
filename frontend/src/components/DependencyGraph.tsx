@@ -1,56 +1,32 @@
 'use client'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import type { ChallengeInfo, Dependency } from '../types'
+import type { ChallengeInfo, Dependency, ChallengeStatus } from '../types'
 import { getNodeType } from '../types'
-
-interface Props {
-  challenges: ChallengeInfo[]
-  dependencies: Dependency[]
-  selectedChallenge: ChallengeInfo | null
-  onSelectChallenge: (challenge: ChallengeInfo | null) => void
-}
-
-interface NodePosition {
-  id: number
-  x: number
-  y: number
-  vx: number
-  vy: number
-}
-
-interface Transform {
-  x: number
-  y: number
-  scale: number
-}
-
-// Obsidian-like color palette
-const ROLE_COLORS: Record<string, string> = {
-  survivor: '#4ade80',  // green
-  killer:   '#f87171',  // red
-  shared:   '#60a5fa',  // blue
-}
-
-const NODE_COLORS: Record<string, string> = {
-  prologue: '#c084fc',  // purple
-  epilogue: '#fb923c',  // orange
-  reward:   '#fbbf24',  // amber
-  challenge: '#60a5fa', // blue
-}
 
 const NODE_RADIUS = 26
 
-// DBD challenge icons (saved locally from Fandom wiki)
-const ICON_URLS: Record<string, string> = {
-  survivor: '/icons/survivor.webp',   // ChallengeIcon_survivor
-  killer:   '/icons/killer.webp',     // ChallengeIcon_killer
-  shared:   '/icons/shared.webp',     // ChallengeIcon_shared
-  prologue: '/icons/prologue.webp',   // ChallengeIcon_purpleGlyph
-  epilogue: '/icons/epilogue.webp',   // ChallengeIcon_orangeGlyph
-  reward:   '/icons/reward.webp',     // ChallengeIcon_yellowGlyph
+const ROLE_COLORS: Record<string, string> = {
+  survivor: '#4ade80',
+  killer:   '#f87171',
+  shared:   '#60a5fa',
 }
 
-// Preload images
+const NODE_COLORS: Record<string, string> = {
+  prologue:  '#c084fc',
+  epilogue:  '#fb923c',
+  reward:    '#fbbf24',
+  challenge: '#60a5fa',
+}
+
+const ICON_URLS: Record<string, string> = {
+  survivor: '/icons/survivor.webp',
+  killer:   '/icons/killer.webp',
+  shared:   '/icons/shared.webp',
+  prologue: '/icons/prologue.webp',
+  epilogue: '/icons/epilogue.webp',
+  reward:   '/icons/reward.webp',
+}
+
 const iconCache = new Map<string, HTMLImageElement>()
 if (typeof window !== 'undefined') {
   for (const [key, url] of Object.entries(ICON_URLS)) {
@@ -59,9 +35,9 @@ if (typeof window !== 'undefined') {
     iconCache.set(key, img)
   }
 }
+
 const LABEL_MAX_WIDTH = 120
 const LABEL_LINE_HEIGHT = 13
-const SIM_FRAMES = 150
 
 function getNodeColor(c: ChallengeInfo): string {
   const t = getNodeType(c.name)
@@ -74,7 +50,6 @@ function getIconKey(c: ChallengeInfo): string {
   return t === 'challenge' ? (c.role || 'shared') : t
 }
 
-// Wrap text into lines that fit maxWidth
 function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
   const words = text.split(' ')
   const lines: string[] = []
@@ -92,18 +67,68 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines
 }
 
-export default function DependencyGraph({ challenges, dependencies, selectedChallenge, onSelectChallenge }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [canvasSize, setCanvasSize] = useState({ width: 800, height: 520 })
-  const [positions, setPositions] = useState<Map<number, NodePosition>>(new Map())
-  const [hoveredId, setHoveredId] = useState<number | null>(null)
-  const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 })
-  const animationRef = useRef<number | null>(null)
-  const isDraggingCanvas = useRef(false)
-  const dragStart = useRef({ mx: 0, my: 0, tx: 0, ty: 0 })
+interface NodePos { x: number; y: number }
+interface Transform { x: number; y: number; scale: number }
 
-  // Observe container width
+const FIT_PADDING = 60
+
+function computeFitTransform(map: Map<number, NodePos>, w: number, h: number): Transform {
+  if (map.size === 0) return { x: 0, y: 0, scale: 1 }
+  const xs = [...map.values()].map(p => p.x)
+  const ys = [...map.values()].map(p => p.y)
+  const minX = Math.min(...xs) - NODE_RADIUS
+  const maxX = Math.max(...xs) + NODE_RADIUS
+  const minY = Math.min(...ys) - NODE_RADIUS
+  const maxY = Math.max(...ys) + NODE_RADIUS + 40 // место для подписей
+  const contentW = maxX - minX || 1
+  const contentH = maxY - minY || 1
+  const scale = Math.min(
+    (w - FIT_PADDING * 2) / contentW,
+    (h - FIT_PADDING * 2) / contentH,
+    1.5, // не увеличиваем слишком сильно
+  )
+  const tx = (w - contentW * scale) / 2 - minX * scale
+  const ty = (h - contentH * scale) / 2 - minY * scale
+  return { x: tx, y: ty, scale }
+}
+
+interface Props {
+  challenges: ChallengeInfo[]
+  dependencies: Dependency[]
+  mode: 'admin' | 'view'
+  // Режим админа
+  onToggleLink?: (a: ChallengeInfo, b: ChallengeInfo) => void
+  onMoveChallenge?: (id: number, gridColumn: number, gridRow: number) => void
+  // Режим просмотра
+  getStatus?: (challenge: ChallengeInfo) => ChallengeStatus
+  onChallengeClick?: (challenge: ChallengeInfo) => void
+}
+
+export default function DependencyGraph({
+  challenges, dependencies, mode,
+  onToggleLink, onMoveChallenge,
+  getStatus, onChallengeClick,
+}: Props) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const canvasRef    = useRef<HTMLCanvasElement>(null)
+
+  const [canvasSize, setCanvasSize] = useState({ width: 800, height: 520 })
+  const [positions,  setPositions]  = useState<Map<number, NodePos>>(new Map())
+  const [hoveredId,  setHoveredId]  = useState<number | null>(null)
+  const [transform,  setTransform]  = useState<Transform>({ x: 0, y: 0, scale: 1 })
+  const [selectedForLink, setSelectedForLink] = useState<ChallengeInfo | null>(null)
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
+
+  // Реф для хранения исходных позиций (из БД) — нужен для пересчёта fit при ресайзе
+  const initialPositionsRef = useRef<Map<number, NodePos>>(new Map())
+
+  // Рефы для drag-событий (не нужны в state — не тригерят рендер)
+  const isDraggingCanvas = useRef(false)
+  const dragStart        = useRef({ mx: 0, my: 0, tx: 0, ty: 0 })
+  const draggingNode     = useRef<{ id: number; startX: number; startY: number } | null>(null)
+  const dragMoved        = useRef(false)
+
+  // Отслеживаем размер контейнера
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -117,91 +142,41 @@ export default function DependencyGraph({ challenges, dependencies, selectedChal
 
   const { width, height } = canvasSize
 
-  // Initialize positions when challenges or canvas size changes
+  // Инициализируем позиции при смене набора заданий
+  const challengeIdsKey = challenges.map(c => c.id).join(',')
   useEffect(() => {
-    const map = new Map<number, NodePosition>()
-    const prologues = challenges.filter(c => getNodeType(c.name) === 'prologue')
-    const epilogues = challenges.filter(c => getNodeType(c.name) === 'epilogue')
-    const others    = challenges.filter(c => { const t = getNodeType(c.name); return t !== 'prologue' && t !== 'epilogue' })
-
-    prologues.forEach((c, i) => {
-      map.set(c.id, { id: c.id, x: width / (prologues.length + 1) * (i + 1), y: 60, vx: 0, vy: 0 })
-    })
-    epilogues.forEach((c, i) => {
-      map.set(c.id, { id: c.id, x: width / (epilogues.length + 1) * (i + 1), y: height - 60, vx: 0, vy: 0 })
-    })
-    others.forEach((c, i) => {
-      const cols = Math.ceil(Math.sqrt(others.length))
-      const col = i % cols
-      const row = Math.floor(i / cols)
-      const sx = width / (cols + 1)
-      const sy = (height - 160) / (Math.ceil(others.length / cols) + 1)
-      map.set(c.id, { id: c.id, x: sx * (col + 1), y: 110 + sy * (row + 1), vx: 0, vy: 0 })
+    const map = new Map<number, NodePos>()
+    const cols = Math.ceil(Math.sqrt(challenges.length)) || 1
+    const fallbackW = 800, fallbackH = 520
+    challenges.forEach((c, i) => {
+      if (c.pos_x != null && c.pos_y != null) {
+        // Позиция сохранена — используем напрямую
+        map.set(c.id, { x: c.pos_x, y: c.pos_y })
+      } else {
+        // Авто-расстановка в сетку если координаты не заданы
+        const col = i % cols
+        const row = Math.floor(i / cols)
+        map.set(c.id, {
+          x: (col + 1) * (fallbackW / (cols + 1)),
+          y: 80 + (row + 1) * ((fallbackH - 160) / (Math.ceil(challenges.length / cols) + 1)),
+        })
+      }
     })
     setPositions(map)
-    setTransform({ x: 0, y: 0, scale: 1 })
-  }, [challenges, width, height])
+    initialPositionsRef.current = map
+    setSelectedForLink(null)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challengeIdsKey])
 
-  // Force simulation
-  const simulate = useCallback(() => {
-    setPositions(prev => {
-      const next = new Map(prev)
-
-      // Repulsion
-      for (const [id1, n1] of next) {
-        for (const [id2, n2] of next) {
-          if (id1 >= id2) continue
-          const dx = n2.x - n1.x, dy = n2.y - n1.y
-          const dist = Math.sqrt(dx * dx + dy * dy) || 1
-          const minDist = NODE_RADIUS * 4.5
-          if (dist < minDist) {
-            const f = (minDist - dist) / dist * 0.4
-            n1.vx -= dx * f; n1.vy -= dy * f
-            n2.vx += dx * f; n2.vy += dy * f
-          }
-        }
-      }
-
-      // Attraction along edges
-      for (const dep of dependencies) {
-        const p = next.get(dep.parent_id), c = next.get(dep.child_id)
-        if (!p || !c) continue
-        const dx = c.x - p.x, dy = c.y - p.y
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1
-        const target = 120
-        const f = (dist - target) / dist * 0.08
-        p.vx += dx * f; p.vy += dy * f
-        c.vx -= dx * f; c.vy -= dy * f
-      }
-
-      // Center gravity (weak)
-      for (const [, n] of next) {
-        n.vx += (width / 2 - n.x) * 0.002
-        n.vy += (height / 2 - n.y) * 0.002
-      }
-
-      // Apply + dampen + clamp
-      for (const [, n] of next) {
-        n.x += n.vx; n.y += n.vy
-        n.vx *= 0.85; n.vy *= 0.85
-        n.x = Math.max(NODE_RADIUS + 10, Math.min(width - NODE_RADIUS - 10, n.x))
-        n.y = Math.max(NODE_RADIUS + 10, Math.min(height - NODE_RADIUS - 10, n.y))
-      }
-
-      return next
-    })
-  }, [dependencies, width, height])
-
+  // Подгоняем масштаб и позицию при смене заданий или размера холста
   useEffect(() => {
-    let frame = 0
-    const run = () => {
-      if (frame < SIM_FRAMES) { simulate(); frame++; animationRef.current = requestAnimationFrame(run) }
-    }
-    run()
-    return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current) }
-  }, [simulate])
+    const map = initialPositionsRef.current
+    if (map.size === 0) return
+    setTransform(computeFitTransform(map, width, height))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challengeIdsKey, width, height])
 
-  // Render
+  // ── Отрисовка ────────────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -218,89 +193,83 @@ export default function DependencyGraph({ challenges, dependencies, selectedChal
     ctx.translate(tx, ty)
     ctx.scale(scale, scale)
 
-    // Grid dots (Obsidian style)
+    // Точки сетки в стиле Obsidian
     const gridStep = 40
     ctx.fillStyle = 'rgba(255,255,255,0.04)'
     const startX = Math.floor(-tx / scale / gridStep) * gridStep
     const startY = Math.floor(-ty / scale / gridStep) * gridStep
-    const endX = startX + width / scale + gridStep
-    const endY = startY + height / scale + gridStep
-    for (let gx = startX; gx < endX; gx += gridStep) {
-      for (let gy = startY; gy < endY; gy += gridStep) {
+    for (let gx = startX; gx < startX + width / scale + gridStep; gx += gridStep) {
+      for (let gy = startY; gy < startY + height / scale + gridStep; gy += gridStep) {
         ctx.beginPath()
         ctx.arc(gx, gy, 1, 0, Math.PI * 2)
         ctx.fill()
       }
     }
 
-    // Edges
+    // Рёбра (ненаправленные)
     for (const dep of dependencies) {
-      const p = positions.get(dep.parent_id), c = positions.get(dep.child_id)
-      if (!p || !c) continue
+      const a = positions.get(dep.a_id), b = positions.get(dep.b_id)
+      if (!a || !b) continue
 
-      const isRelated = selectedChallenge?.id === dep.parent_id || selectedChallenge?.id === dep.child_id
-      const lineColor = isRelated ? 'rgba(250,204,21,0.9)' : 'rgba(255,255,255,0.15)'
-      const lineWidth = isRelated ? 2 : 1
+      const isHighlighted =
+        selectedForLink?.id === dep.a_id || selectedForLink?.id === dep.b_id ||
+        hoveredId === dep.a_id || hoveredId === dep.b_id
 
-      ctx.strokeStyle = lineColor
-      ctx.lineWidth = lineWidth / scale
+      ctx.strokeStyle = isHighlighted ? 'rgba(250,204,21,0.9)' : 'rgba(255,255,255,0.15)'
+      ctx.lineWidth   = (isHighlighted ? 2 : 1) / scale
       ctx.beginPath()
-      ctx.moveTo(p.x, p.y)
-      ctx.lineTo(c.x, c.y)
+      ctx.moveTo(a.x, a.y)
+      ctx.lineTo(b.x, b.y)
       ctx.stroke()
-
-      // Arrow
-      const angle = Math.atan2(c.y - p.y, c.x - p.x)
-      const ar = NODE_RADIUS + 4
-      const ax = c.x - Math.cos(angle) * ar
-      const ay = c.y - Math.sin(angle) * ar
-      const aLen = 7 / scale
-      ctx.fillStyle = lineColor
-      ctx.beginPath()
-      ctx.moveTo(ax, ay)
-      ctx.lineTo(ax - aLen * Math.cos(angle - Math.PI / 6), ay - aLen * Math.sin(angle - Math.PI / 6))
-      ctx.lineTo(ax - aLen * Math.cos(angle + Math.PI / 6), ay - aLen * Math.sin(angle + Math.PI / 6))
-      ctx.closePath()
-      ctx.fill()
     }
 
-    // Nodes
+    // Узлы
     ctx.font = `${12 / scale}px Inter, system-ui, sans-serif`
 
     for (const challenge of challenges) {
       const pos = positions.get(challenge.id)
       if (!pos) continue
 
-      const color = getNodeColor(challenge)
-      const isSelected = selectedChallenge?.id === challenge.id
-      const isHovered = hoveredId === challenge.id
-      const r = isSelected ? NODE_RADIUS + 4 : isHovered ? NODE_RADIUS + 2 : NODE_RADIUS
+      const color            = getNodeColor(challenge)
+      const isHovered        = hoveredId === challenge.id
+      const isSelectedLink   = selectedForLink?.id === challenge.id
+      const status           = mode === 'view' ? getStatus?.(challenge) : undefined
+      const isCompleted      = status === 'completed'
+      const isLocked         = status === 'locked'
 
-      // Glow
-      if (isSelected || isHovered) {
-        ctx.shadowColor = isSelected ? 'rgba(250,204,21,0.9)' : color
-        ctx.shadowBlur = isSelected ? 24 : 14
+      const r = isSelectedLink ? NODE_RADIUS + 4 : isHovered ? NODE_RADIUS + 2 : NODE_RADIUS
+
+      // Свечение
+      if (isSelectedLink) {
+        ctx.shadowColor = 'rgba(250,204,21,0.9)'
+        ctx.shadowBlur  = 24
+      } else if (isHovered) {
+        ctx.shadowColor = color
+        ctx.shadowBlur  = 14
       }
 
-      // Node circle background
+      // Заливка круга — цвет не меняется при выполнении
       ctx.beginPath()
       ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2)
-      ctx.fillStyle = isSelected ? 'rgba(251,191,36,0.25)' : `${color}33`
+      ctx.fillStyle = isLocked ? `${color}15` : `${color}33`
       ctx.fill()
 
-      // Ring border
-      ctx.strokeStyle = isSelected ? '#fbbf24' : isHovered ? '#fff' : color
-      ctx.lineWidth = (isSelected ? 3 : 2) / scale
+      // Обводка — цвет не меняется при выполнении
+      ctx.strokeStyle = isSelectedLink ? '#fbbf24'
+        : isHovered ? '#fff'
+        : isLocked  ? `${color}44`
+        : color
+      ctx.lineWidth = (isSelectedLink ? 3 : 2) / scale
       ctx.stroke()
 
       ctx.shadowBlur = 0
 
-      // Icon image
-      const iconKey = getIconKey(challenge)
-      const img = iconCache.get(iconKey)
-      const iconSize = (r * 1.4)
+      // Иконка
+      const img      = iconCache.get(getIconKey(challenge))
+      const iconSize = r * 1.4
       if (img?.complete && img.naturalWidth > 0) {
         ctx.save()
+        ctx.globalAlpha = isLocked ? 0.25 : 1
         ctx.beginPath()
         ctx.arc(pos.x, pos.y, r - 2 / scale, 0, Math.PI * 2)
         ctx.clip()
@@ -308,38 +277,77 @@ export default function DependencyGraph({ challenges, dependencies, selectedChal
         ctx.restore()
       }
 
-      // Label below node
-      const label = challenge.name || challenge.challenge_key
-      const lines = wrapText(ctx, label, LABEL_MAX_WIDTH / scale)
-      const lineH = LABEL_LINE_HEIGHT / scale
+      // Галочка для выполненных заданий
+      if (isCompleted) {
+        const cs = 8 / scale
+        const cy = pos.y - r + 6 / scale
+        ctx.save()
+        ctx.strokeStyle = '#4ade80'
+        ctx.lineWidth   = 2.5 / scale
+        ctx.lineCap     = 'round'
+        ctx.lineJoin    = 'round'
+        // Рисуем галочку поверх иконки в правом верхнем углу узла
+        const bx = pos.x + r * 0.55, by = pos.y - r * 0.55
+        const bs = 7 / scale
+        ctx.beginPath()
+        ctx.arc(bx, by, bs, 0, Math.PI * 2)
+        ctx.fillStyle = '#14532d'
+        ctx.fill()
+        ctx.strokeStyle = '#4ade80'
+        ctx.lineWidth   = 1.5 / scale
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(bx - bs * 0.4, by)
+        ctx.lineTo(bx - bs * 0.05, by + bs * 0.4)
+        ctx.lineTo(bx + bs * 0.45, by - bs * 0.35)
+        ctx.strokeStyle = '#4ade80'
+        ctx.lineWidth   = 1.8 / scale
+        ctx.stroke()
+        ctx.restore()
+        void cs; void cy
+      }
+
+      // Подпись под узлом
+      ctx.globalAlpha = isLocked ? 0.35 : 1
+      const label  = challenge.name || challenge.challenge_key
+      const lines  = wrapText(ctx, label, LABEL_MAX_WIDTH / scale)
+      const lineH  = LABEL_LINE_HEIGHT / scale
       const labelY = pos.y + r + 6 / scale
 
-      ctx.textAlign = 'center'
+      ctx.textAlign    = 'center'
       ctx.textBaseline = 'top'
-
       lines.slice(0, 3).forEach((line, i) => {
-        // Shadow for readability
         ctx.fillStyle = 'rgba(0,0,0,0.7)'
         ctx.fillText(line, pos.x + 0.5 / scale, labelY + i * lineH + 0.5 / scale)
-        // Text
-        ctx.fillStyle = isSelected ? '#fbbf24' : isHovered ? '#fff' : 'rgba(255,255,255,0.85)'
+        ctx.fillStyle = isSelectedLink ? '#fbbf24'
+          : isHovered ? '#fff'
+          : 'rgba(255,255,255,0.85)'
         ctx.fillText(line, pos.x, labelY + i * lineH)
       })
+      ctx.globalAlpha = 1
+
+      // Индикатор выбранного для связи
+      if (mode === 'admin' && isSelectedLink) {
+        ctx.font      = `bold ${10 / scale}px Inter, system-ui, sans-serif`
+        ctx.fillStyle = '#fbbf24'
+        ctx.fillText('●●●', pos.x, pos.y - r - 8 / scale)
+        ctx.font = `${12 / scale}px Inter, system-ui, sans-serif`
+      }
     }
 
-    // Legend
     ctx.restore()
 
+    // Легенда
     const legends = [
-      { color: NODE_COLORS.prologue, label: 'Prologue' },
-      { color: ROLE_COLORS.survivor, label: 'Survivor' },
-      { color: ROLE_COLORS.killer, label: 'Killer' },
-      { color: ROLE_COLORS.shared, label: 'Any' },
-      { color: NODE_COLORS.epilogue, label: 'Epilogue' },
+      { color: NODE_COLORS.prologue, label: 'Пролог' },
+      { color: ROLE_COLORS.survivor, label: 'Выживший' },
+      { color: ROLE_COLORS.killer,   label: 'Убийца' },
+      { color: ROLE_COLORS.shared,   label: 'Любой' },
+      { color: NODE_COLORS.epilogue, label: 'Эпилог' },
     ]
-    ctx.font = '11px Inter, system-ui, sans-serif'
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'middle'
+    ctx.font          = '11px Inter, system-ui, sans-serif'
+    ctx.textAlign     = 'left'
+    ctx.textBaseline  = 'middle'
     legends.forEach((leg, i) => {
       const lx = 14, ly = 16 + i * 20
       ctx.beginPath()
@@ -350,21 +358,24 @@ export default function DependencyGraph({ challenges, dependencies, selectedChal
       ctx.fillText(leg.label, lx + 10, ly)
     })
 
-    // Hint
-    ctx.font = '10px Inter, system-ui, sans-serif'
+    // Подсказка
+    ctx.font      = '10px Inter, system-ui, sans-serif'
     ctx.fillStyle = 'rgba(255,255,255,0.3)'
     ctx.textAlign = 'right'
-    ctx.fillText('Scroll to zoom · Drag to pan', width - 8, height - 8)
-  }, [positions, challenges, dependencies, selectedChallenge, hoveredId, transform, width, height])
+    const hint = mode === 'admin'
+      ? (selectedForLink
+          ? 'Нажмите другое задание для связи · Esc — отмена'
+          : 'Клик — выбрать · Зажать — переместить · Скролл — зум · Тащить фон — панорама')
+      : 'Клик — отметить · Скролл — зум · Тащить фон — панорама'
+    ctx.fillText(hint, width - 8, height - 8)
+  }, [positions, challenges, dependencies, hoveredId, transform, width, height, mode, selectedForLink, getStatus])
 
-  // Screen → world coordinates
+  // ── Утилиты ──────────────────────────────────────────────────────────────────
   const toWorld = useCallback((mx: number, my: number) => {
     const rect = canvasRef.current!.getBoundingClientRect()
-    const sx = (mx - rect.left)
-    const sy = (my - rect.top)
     return {
-      x: (sx - transform.x) / transform.scale,
-      y: (sy - transform.y) / transform.scale,
+      x: (mx - rect.left  - transform.x) / transform.scale,
+      y: (my - rect.top   - transform.y) / transform.scale,
     }
   }, [transform])
 
@@ -380,33 +391,63 @@ export default function DependencyGraph({ challenges, dependencies, selectedChal
     return closest
   }, [challenges, positions])
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault()
-    const rect = canvasRef.current!.getBoundingClientRect()
-    const mx = e.clientX - rect.left
-    const my = e.clientY - rect.top
-    const delta = e.deltaY > 0 ? 0.9 : 1.1
-    setTransform(prev => {
-      const newScale = Math.max(0.2, Math.min(4, prev.scale * delta))
-      const ratio = newScale / prev.scale
-      return {
-        scale: newScale,
-        x: mx - (mx - prev.x) * ratio,
-        y: my - (my - prev.y) * ratio,
-      }
-    })
+  // ── Zoom ─────────────────────────────────────────────────────────────────────
+  // Используем нативный addEventListener с passive: false, чтобы e.preventDefault()
+  // блокировал глобальный скролл страницы (React вешает wheel как passive по умолчанию)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = canvas.getBoundingClientRect()
+      const mx   = e.clientX - rect.left
+      const my   = e.clientY - rect.top
+      const delta = e.deltaY > 0 ? 0.9 : 1.1
+      setTransform(prev => {
+        const newScale = Math.max(0.2, Math.min(4, prev.scale * delta))
+        const ratio    = newScale / prev.scale
+        return { scale: newScale, x: mx - (mx - prev.x) * ratio, y: my - (my - prev.y) * ratio }
+      })
+    }
+    canvas.addEventListener('wheel', handler, { passive: false })
+    return () => canvas.removeEventListener('wheel', handler)
   }, [])
 
+  // ── Mouse events ─────────────────────────────────────────────────────────────
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const { x: wx, y: wy } = toWorld(e.clientX, e.clientY)
     const hit = hitTest(wx, wy)
-    if (!hit) {
+    if (hit) {
+      // Начинаем потенциальное перетаскивание узла (или просто клик)
+      draggingNode.current = { id: hit.id, startX: wx, startY: wy }
+      dragMoved.current    = false
+    } else {
+      // Начинаем перетаскивание холста
       isDraggingCanvas.current = true
-      dragStart.current = { mx: e.clientX, my: e.clientY, tx: transform.x, ty: transform.y }
+      dragStart.current        = { mx: e.clientX, my: e.clientY, tx: transform.x, ty: transform.y }
     }
   }, [toWorld, hitTest, transform])
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const { x: wx, y: wy } = toWorld(e.clientX, e.clientY)
+
+    if (draggingNode.current) {
+      const dx = wx - draggingNode.current.startX
+      const dy = wy - draggingNode.current.startY
+      if (Math.sqrt(dx * dx + dy * dy) > 4) dragMoved.current = true
+
+      // Перемещаем узел только в режиме админа
+      if (dragMoved.current && mode === 'admin') {
+        const id = draggingNode.current.id
+        setPositions(prev => {
+          const next = new Map(prev)
+          next.set(id, { x: wx, y: wy })
+          return next
+        })
+      }
+      return
+    }
+
     if (isDraggingCanvas.current) {
       setTransform(prev => ({
         ...prev,
@@ -415,33 +456,147 @@ export default function DependencyGraph({ challenges, dependencies, selectedChal
       }))
       return
     }
-    const { x: wx, y: wy } = toWorld(e.clientX, e.clientY)
+
+    // Обновляем hover и тултип
     const hit = hitTest(wx, wy)
     setHoveredId(hit?.id ?? null)
-  }, [toWorld, hitTest])
+
+    if (hit) {
+      const rect = canvasRef.current!.getBoundingClientRect()
+      setTooltipPos({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+    } else {
+      setTooltipPos(null)
+    }
+  }, [toWorld, hitTest, mode])
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    // Завершение перетаскивания холста
     if (isDraggingCanvas.current) {
       isDraggingCanvas.current = false
       return
     }
-    const { x: wx, y: wy } = toWorld(e.clientX, e.clientY)
-    onSelectChallenge(hitTest(wx, wy))
-  }, [toWorld, hitTest, onSelectChallenge])
+
+    if (!draggingNode.current) return
+    const { id } = draggingNode.current
+    const moved  = dragMoved.current
+    draggingNode.current = null
+    dragMoved.current    = false
+
+    if (moved && mode === 'admin') {
+      // Сохраняем мировые координаты узла напрямую
+      const pos = positions.get(id)
+      if (pos && onMoveChallenge) {
+        onMoveChallenge(id, pos.x, pos.y)
+      }
+      return
+    }
+
+    // Это был клик
+    const clicked = challenges.find(c => c.id === id)
+    if (!clicked) return
+
+    if (mode === 'admin') {
+      // Логика создания/удаления связи
+      if (!selectedForLink) {
+        setSelectedForLink(clicked)
+      } else if (selectedForLink.id === clicked.id) {
+        setSelectedForLink(null)
+      } else {
+        onToggleLink?.(selectedForLink, clicked)
+        setSelectedForLink(null)
+      }
+    } else {
+      // Режим просмотра: отметить/снять задание
+      onChallengeClick?.(clicked)
+    }
+  }, [challenges, mode, positions, selectedForLink, onToggleLink, onMoveChallenge, onChallengeClick])
+
+  // Esc — отмена выбора
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedForLink(null) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // ── Tooltip ───────────────────────────────────────────────────────────────────
+  const hoveredChallenge = hoveredId !== null ? challenges.find(c => c.id === hoveredId) : null
+
+  const tooltipOnLeft = tooltipPos ? tooltipPos.x > width - 270 : false
 
   return (
-    <div ref={containerRef} style={{ width: '100%' }}>
+    <div ref={containerRef} style={{ width: '100%', position: 'relative', userSelect: 'none' }}>
       <canvas
         ref={canvasRef}
         width={width}
         height={height}
-        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => { setHoveredId(null); isDraggingCanvas.current = false }}
-        style={{ borderRadius: 10, cursor: hoveredId ? 'pointer' : isDraggingCanvas.current ? 'grabbing' : 'grab', display: 'block', width: '100%' }}
+        onMouseLeave={() => {
+          setHoveredId(null)
+          setTooltipPos(null)
+          isDraggingCanvas.current = false
+          if (!dragMoved.current) draggingNode.current = null
+        }}
+        style={{
+          borderRadius: 10,
+          display: 'block',
+          width: '100%',
+          cursor: draggingNode.current && dragMoved.current
+            ? 'grabbing'
+            : hoveredId !== null
+              ? 'pointer'
+              : isDraggingCanvas.current
+                ? 'grabbing'
+                : 'grab',
+        }}
       />
+
+      {/* Тултип при наведении */}
+      {hoveredChallenge && tooltipPos && (
+        <div style={{
+          position:       'absolute',
+          left:           tooltipOnLeft ? tooltipPos.x - 256 : tooltipPos.x + 16,
+          top:            Math.max(0, tooltipPos.y - 8),
+          background:     'rgba(17,24,39,0.96)',
+          border:         '1px solid rgba(255,255,255,0.12)',
+          borderRadius:   8,
+          padding:        '10px 14px',
+          maxWidth:       240,
+          pointerEvents:  'none',
+          zIndex:         10,
+          backdropFilter: 'blur(8px)',
+          boxShadow:      '0 4px 20px rgba(0,0,0,0.5)',
+        }}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: '#fff', marginBottom: 4, lineHeight: 1.3 }}>
+            {hoveredChallenge.name || hoveredChallenge.challenge_key}
+          </div>
+          {hoveredChallenge.role && (
+            <div style={{ fontSize: 11, color: getNodeColor(hoveredChallenge), marginBottom: 6, textTransform: 'capitalize' }}>
+              {hoveredChallenge.role}
+            </div>
+          )}
+          {hoveredChallenge.objective && (
+            <div
+              style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', lineHeight: 1.5 }}
+              dangerouslySetInnerHTML={{ __html: hoveredChallenge.objective.slice(0, 300) }}
+            />
+          )}
+          {mode === 'view' && getStatus && (
+            <div style={{
+              marginTop: 8,
+              fontSize:  11,
+              color: getStatus(hoveredChallenge) === 'completed' ? 'rgba(255,255,255,0.5)'
+                : getStatus(hoveredChallenge) === 'available'   ? 'rgba(255,255,255,0.5)'
+                : '#f87171',
+            }}>
+              {getStatus(hoveredChallenge) === 'completed' ? '✓ Выполнено'
+                : getStatus(hoveredChallenge) === 'available' ? 'Доступно'
+                : '🔒 Заблокировано'}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,0 +1,15 @@
+[Unit]
+Description=DBD Tomes Challenges — Next.js frontend
+After=network.target
+
+[Service]
+User=dbd
+WorkingDirectory=/srv/dbd-tomes-challenges/frontend
+Environment=NODE_ENV=production
+Environment=PORT=3001
+ExecStart=/usr/bin/node /srv/dbd-tomes-challenges/frontend/node_modules/.bin/next start -p 3001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -139,8 +139,8 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # колонка уже существует
 
-    # Миграция: добавить колонки позиций для древовидной структуры
-    for col_def in ["grid_column INTEGER", "grid_row INTEGER"]:
+    # Миграция: добавить колонки координат для графа (заменяют grid_column/grid_row)
+    for col_def in ["grid_column INTEGER", "grid_row INTEGER", "pos_x REAL", "pos_y REAL"]:
         try:
             conn.execute(f"ALTER TABLE challenges ADD COLUMN {col_def}")
             conn.commit()
@@ -358,10 +358,24 @@ def get_tome(archive_key: str):
 @app.get("/api/pages/<int:page_id>")
 def get_page(page_id: int):
     """
-    Страница со списком заданий.
+    Страница со списком заданий и графом зависимостей между ними.
     Query params:
       lang — язык (en/ru)
-    Ответ 200: { ...page, challenges: [ { challenge_key, name, role, objective, rewards }, ... ] }
+    Ответ 200:
+    {
+      id, tome_id, level_number,
+      challenges: [
+        { challenge_key, name, role, objective, rewards, pos_x, pos_y },
+        ...
+      ],
+      dependencies: [
+        { a: "Tome01_L1_N0", b: "Tome01_L1_N2" },
+        ...
+      ]
+    }
+    Поле dependencies описывает ненаправленный граф связей между заданиями.
+    Каждая запись означает, что задания a и b взаимосвязаны
+    (выполнение одного открывает доступ к другому).
     """
     lang = get_request_lang()
     db = get_db()
@@ -374,8 +388,31 @@ def get_page(page_id: int):
         (page_id,),
     ).fetchall()
 
+    # Собираем зависимости, возвращая challenge_key вместо внутренних ID
+    challenge_ids = [c["id"] for c in challenges]
+    id_to_key = {c["id"]: c["challenge_key"] for c in challenges}
+    dependencies = []
+    if challenge_ids:
+        placeholders = ",".join("?" * len(challenge_ids))
+        raw_deps = db.execute(f"""
+            SELECT child_id, parent_id
+            FROM challenge_dependencies
+            WHERE child_id IN ({placeholders}) OR parent_id IN ({placeholders})
+        """, challenge_ids + challenge_ids).fetchall()
+
+        seen: set[tuple[int, int]] = set()
+        for d in raw_deps:
+            key = (min(d["child_id"], d["parent_id"]), max(d["child_id"], d["parent_id"]))
+            if key not in seen:
+                seen.add(key)
+                dependencies.append({
+                    "a": id_to_key[key[0]],
+                    "b": id_to_key[key[1]],
+                })
+
     result = row_to_dict(page)
     result["challenges"] = [localize_challenge(row_to_dict(c), lang) for c in challenges]
+    result["dependencies"] = dependencies
     return jsonify(result)
 
 
@@ -489,11 +526,86 @@ def get_progress():
     return jsonify(result)
 
 
+def is_challenge_available(db: sqlite3.Connection, challenge_id: int, user_id: int) -> bool:
+    """
+    Проверить, доступно ли задание для выполнения данным пользователем.
+
+    Правила:
+    - Пролог на первой странице тома — всегда доступен.
+    - Пролог на последующих страницах — доступен, если выполнен хотя бы один эпилог
+      предыдущей страницы.
+    - Остальные задания без связей — доступны.
+    - Остальные задания со связями — доступны, если хотя бы один сосед выполнен.
+    """
+    challenge = db.execute(
+        "SELECT id, name, page_id FROM challenges WHERE id = ?", (challenge_id,)
+    ).fetchone()
+    if not challenge:
+        return False
+
+    # ── Пролог ───────────────────────────────────────────────────────────────
+    if is_prologue(challenge["name"]):
+        page = db.execute(
+            "SELECT id, tome_id, level_number FROM pages WHERE id = ?",
+            (challenge["page_id"],)
+        ).fetchone()
+        if not page:
+            return False
+
+        # Первая страница тома — пролог всегда доступен
+        prev_page = db.execute(
+            "SELECT id FROM pages WHERE tome_id = ? AND level_number < ? ORDER BY level_number DESC LIMIT 1",
+            (page["tome_id"], page["level_number"])
+        ).fetchone()
+        if not prev_page:
+            return True
+
+        # Иначе нужен выполненный эпилог предыдущей страницы
+        epilogues = db.execute(
+            "SELECT c.id FROM challenges c WHERE c.page_id = ?", (prev_page["id"],)
+        ).fetchall()
+        epilogue_ids = [e["id"] for e in epilogues if is_epilogue(
+            db.execute("SELECT name FROM challenges WHERE id = ?", (e["id"],)).fetchone()["name"]
+        )]
+        if not epilogue_ids:
+            return True  # нет эпилогов — считаем доступным
+
+        placeholders = ",".join("?" * len(epilogue_ids))
+        completed = db.execute(
+            f"SELECT 1 FROM user_challenge_progress "
+            f"WHERE user_id = ? AND completed = 1 AND challenge_id IN ({placeholders}) LIMIT 1",
+            [user_id] + epilogue_ids
+        ).fetchone()
+        return completed is not None
+
+    # ── Обычное задание / эпилог ──────────────────────────────────────────────
+    # Получаем всех соседей (ненаправленный граф)
+    neighbors = db.execute(
+        """SELECT CASE WHEN child_id = ? THEN parent_id ELSE child_id END AS neighbor_id
+           FROM challenge_dependencies
+           WHERE child_id = ? OR parent_id = ?""",
+        (challenge_id, challenge_id, challenge_id)
+    ).fetchall()
+
+    if not neighbors:
+        return True  # нет связей — доступно
+
+    neighbor_ids = [n["neighbor_id"] for n in neighbors]
+    placeholders = ",".join("?" * len(neighbor_ids))
+    completed = db.execute(
+        f"SELECT 1 FROM user_challenge_progress "
+        f"WHERE user_id = ? AND completed = 1 AND challenge_id IN ({placeholders}) LIMIT 1",
+        [user_id] + neighbor_ids
+    ).fetchone()
+    return completed is not None
+
+
 @app.put("/api/user/progress/<challenge_key>")
 @jwt_required()
 def set_progress(challenge_key: str):
     """
     Установить признак выполненности задания. Требует JWT.
+    При попытке отметить заблокированное задание возвращает 403.
     Body: { "completed": true / false }
     Ответ 200: { "challenge_key": "...", "completed": true/false }
     """
@@ -507,6 +619,10 @@ def set_progress(challenge_key: str):
     ).fetchone()
     if not challenge:
         return jsonify({"error": "Challenge not found"}), 404
+
+    # Проверяем доступность только при попытке отметить как выполненное
+    if completed and not is_challenge_available(db, challenge["id"], user_id):
+        return jsonify({"error": "Challenge is locked"}), 403
 
     db.execute(
         """INSERT INTO user_challenge_progress (user_id, challenge_id, completed, updated_at)
@@ -728,7 +844,7 @@ def get_page_dependencies(page_id: int):
         return jsonify({"error": "Page not found"}), 404
 
     challenges = db.execute("""
-        SELECT id, challenge_key, name, role, objective, grid_column, grid_row, name_ru, objective_ru
+        SELECT id, challenge_key, name, role, objective, pos_x, pos_y, name_ru, objective_ru
         FROM challenges
         WHERE page_id = ?
         ORDER BY node_index
@@ -740,15 +856,25 @@ def get_page_dependencies(page_id: int):
     challenge_ids = [c["id"] for c in challenges]
     placeholders = ",".join("?" * len(challenge_ids))
 
-    dependencies = db.execute(f"""
+    # Запрашиваем связи в обоих направлениях (граф ненаправленный)
+    raw_deps = db.execute(f"""
         SELECT child_id, parent_id
         FROM challenge_dependencies
-        WHERE child_id IN ({placeholders})
-    """, challenge_ids).fetchall()
+        WHERE child_id IN ({placeholders}) OR parent_id IN ({placeholders})
+    """, challenge_ids + challenge_ids).fetchall()
+
+    # Убираем дубли: каждую пару возвращаем один раз
+    seen: set[tuple[int, int]] = set()
+    dependencies = []
+    for d in raw_deps:
+        key = (min(d["child_id"], d["parent_id"]), max(d["child_id"], d["parent_id"]))
+        if key not in seen:
+            seen.add(key)
+            dependencies.append({"a_id": key[0], "b_id": key[1]})
 
     return jsonify({
         "challenges": [localize_challenge(row_to_dict(c), lang) for c in challenges],
-        "dependencies": [{"child_id": d["child_id"], "parent_id": d["parent_id"]} for d in dependencies]
+        "dependencies": dependencies
     })
 
 
@@ -756,43 +882,44 @@ def get_page_dependencies(page_id: int):
 @admin_required
 def set_challenge_position(challenge_key: str):
     """
-    Установить позицию задания в сетке. Только для админов.
-    Body: { "grid_column": 5, "grid_row": 3 }
-    Ответ 200: { challenge_key, grid_column, grid_row }
+    Установить позицию задания на графе. Только для админов.
+    Body: { "pos_x": 450.0, "pos_y": 200.0 }
+    Ответ 200: { challenge_key, pos_x, pos_y }
     """
     db = get_db()
     data = request.get_json(silent=True) or {}
 
-    grid_column = data.get("grid_column")
-    grid_row = data.get("grid_row")
+    pos_x = data.get("pos_x")
+    pos_y = data.get("pos_y")
 
-    if grid_column is None or grid_row is None:
-        return jsonify({"error": "grid_column and grid_row are required"}), 400
+    if pos_x is None or pos_y is None:
+        return jsonify({"error": "pos_x and pos_y are required"}), 400
 
     result = db.execute("""
         UPDATE challenges
-        SET grid_column = ?, grid_row = ?
+        SET pos_x = ?, pos_y = ?
         WHERE challenge_key = ?
-    """, (grid_column, grid_row, challenge_key))
+    """, (float(pos_x), float(pos_y), challenge_key))
 
     if result.rowcount == 0:
         return jsonify({"error": "Challenge not found"}), 404
 
     db.commit()
-    return jsonify({"challenge_key": challenge_key, "grid_column": grid_column, "grid_row": grid_row})
+    return jsonify({"challenge_key": challenge_key, "pos_x": pos_x, "pos_y": pos_y})
 
 
 @app.post("/api/admin/challenges/<challenge_key>/dependencies")
 @admin_required
 def set_challenge_dependencies(challenge_key: str):
     """
-    Установить зависимости задания (заменяет все существующие). Только для админов.
-    Body: { "parent_keys": ["Tome01_L1_N0", "Tome01_L1_N2"] }
-    Ответ 200: { challenge_key, parent_keys }
+    Установить связи задания (заменяет все существующие). Только для админов.
+    Граф ненаправленный: связи хранятся с min(id) как child_id.
+    Body: { "linked_keys": ["Tome01_L1_N0", "Tome01_L1_N2"] }
+    Ответ 200: { challenge_key, linked_keys }
     """
     db = get_db()
     data = request.get_json(silent=True) or {}
-    parent_keys = data.get("parent_keys", [])
+    linked_keys = data.get("linked_keys", [])
 
     challenge = db.execute(
         "SELECT id FROM challenges WHERE challenge_key = ?", (challenge_key,)
@@ -800,24 +927,29 @@ def set_challenge_dependencies(challenge_key: str):
     if not challenge:
         return jsonify({"error": "Challenge not found"}), 404
 
-    # Удалить существующие зависимости
-    db.execute("DELETE FROM challenge_dependencies WHERE child_id = ?", (challenge["id"],))
+    # Удалить все связи, в которых участвует данное задание (в обоих направлениях)
+    db.execute(
+        "DELETE FROM challenge_dependencies WHERE child_id = ? OR parent_id = ?",
+        (challenge["id"], challenge["id"])
+    )
 
-    # Добавить новые зависимости
-    valid_parent_keys = []
-    for parent_key in parent_keys:
-        parent = db.execute(
-            "SELECT id FROM challenges WHERE challenge_key = ?", (parent_key,)
+    # Добавить новые связи (храним пару как min_id, max_id)
+    valid_linked_keys = []
+    for linked_key in linked_keys:
+        linked = db.execute(
+            "SELECT id FROM challenges WHERE challenge_key = ?", (linked_key,)
         ).fetchone()
-        if parent and parent["id"] != challenge["id"]:  # нельзя зависеть от себя
-            db.execute("""
-                INSERT INTO challenge_dependencies (child_id, parent_id)
-                VALUES (?, ?)
-            """, (challenge["id"], parent["id"]))
-            valid_parent_keys.append(parent_key)
+        if linked and linked["id"] != challenge["id"]:
+            a_id = min(challenge["id"], linked["id"])
+            b_id = max(challenge["id"], linked["id"])
+            db.execute(
+                "INSERT OR IGNORE INTO challenge_dependencies (child_id, parent_id) VALUES (?, ?)",
+                (a_id, b_id)
+            )
+            valid_linked_keys.append(linked_key)
 
     db.commit()
-    return jsonify({"challenge_key": challenge_key, "parent_keys": valid_parent_keys})
+    return jsonify({"challenge_key": challenge_key, "linked_keys": valid_linked_keys})
 
 
 @app.post("/api/admin/pages/<int:page_id>/auto-layout")
@@ -844,26 +976,46 @@ def auto_layout_page(page_id: int):
     if not challenges:
         return jsonify({"error": "No challenges found"}), 404
 
-    # Авто-расстановка: линейная по центру сетки
-    grid_width = 13  # Стандартная ширина сетки DBD
-    center_col = grid_width // 2
+    # Авто-расстановка в виртуальном пространстве 900×580
+    # Пролог вверху, эпилог внизу, остальные — в центре сеткой
+    CANVAS_W, CANVAS_H = 900.0, 580.0
+    CENTER_X = CANVAS_W / 2
+
+    prologues = [c for c in challenges if is_prologue(c["name"])]
+    epilogues  = [c for c in challenges if is_epilogue(c["name"])]
+    others     = [c for c in challenges if not is_prologue(c["name"]) and not is_epilogue(c["name"])]
+
+    def spread(items, y, canvas_w):
+        """Равномерно распределить items по горизонтали на высоте y."""
+        n = len(items)
+        for j, item in enumerate(items):
+            x = canvas_w / (n + 1) * (j + 1)
+            db.execute("UPDATE challenges SET pos_x = ?, pos_y = ? WHERE id = ?",
+                       (x, y, item["id"]))
+
+    spread(prologues, 60.0, CANVAS_W)
+    spread(epilogues, CANVAS_H - 60.0, CANVAS_W)
+
+    cols = max(1, round((len(others) ** 0.5)))
+    for i, challenge in enumerate(others):
+        col = i % cols
+        row = i // cols
+        rows_total = (len(others) + cols - 1) // cols
+        x = CANVAS_W / (cols + 1) * (col + 1)
+        y = 140.0 + (CANVAS_H - 280.0) / (rows_total + 1) * (row + 1)
+        db.execute("UPDATE challenges SET pos_x = ?, pos_y = ? WHERE id = ?",
+                   (x, y, challenge["id"]))
 
     for i, challenge in enumerate(challenges):
-        grid_row = i
-        grid_col = center_col
-
-        db.execute("""
-            UPDATE challenges
-            SET grid_column = ?, grid_row = ?
-            WHERE id = ?
-        """, (grid_col, grid_row, challenge["id"]))
-
-        # Линейная зависимость: предыдущее -> текущее
+        # Линейная связь с предыдущим заданием (ненаправленная: храним как min_id, max_id)
         if i > 0:
-            db.execute("""
-                INSERT OR IGNORE INTO challenge_dependencies (child_id, parent_id)
-                VALUES (?, ?)
-            """, (challenge["id"], challenges[i - 1]["id"]))
+            prev_id = challenges[i - 1]["id"]
+            a_id = min(challenge["id"], prev_id)
+            b_id = max(challenge["id"], prev_id)
+            db.execute(
+                "INSERT OR IGNORE INTO challenge_dependencies (child_id, parent_id) VALUES (?, ?)",
+                (a_id, b_id)
+            )
 
     db.commit()
     return jsonify({"message": "Auto-layout applied", "challenges_updated": len(challenges)})
@@ -872,11 +1024,11 @@ def auto_layout_page(page_id: int):
 # ─── Статус выполнения ────────────────────────────────────────────────────────
 
 def is_prologue(name: str | None) -> bool:
-    return name is not None and name.lower() == "prologue"
+    return name is not None and name.lower() in ("prologue", "пролог")
 
 
 def is_epilogue(name: str | None) -> bool:
-    return name is not None and name.lower() == "epilogue"
+    return name is not None and name.lower() in ("epilogue", "эпилог")
 
 
 def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) -> dict:
@@ -912,20 +1064,22 @@ def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) ->
     """.format(",".join("?" * len(challenge_ids))), [user_id] + list(challenge_ids)).fetchall()
     completed_ids = {r["challenge_id"] for r in completed_rows}
 
-    # Зависимости
-    deps = db.execute("""
+    # Связи (ненаправленный граф: ищем в обоих направлениях)
+    id_list = list(challenge_ids)
+    placeholders = ",".join("?" * len(id_list))
+    deps = db.execute(f"""
         SELECT child_id, parent_id
         FROM challenge_dependencies
-        WHERE child_id IN ({})
-    """.format(",".join("?" * len(challenge_ids))), list(challenge_ids)).fetchall()
+        WHERE child_id IN ({placeholders}) OR parent_id IN ({placeholders})
+    """, id_list + id_list).fetchall()
 
-    # Построить граф: parent -> children
-    children_map: dict[int, set[int]] = {}
+    # Построить ненаправленный граф смежности
+    adjacency: dict[int, set[int]] = {}
     for d in deps:
-        children_map.setdefault(d["parent_id"], set()).add(d["child_id"])
+        adjacency.setdefault(d["child_id"], set()).add(d["parent_id"])
+        adjacency.setdefault(d["parent_id"], set()).add(d["child_id"])
 
-    # BFS от прологов к эпилогам
-    # Ищем путь, где все узлы выполнены
+    # BFS от прологов к эпилогам по ненаправленному графу выполненных узлов
     from collections import deque
 
     for start_id in prologue_ids:
@@ -941,10 +1095,10 @@ def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) ->
             if current in epilogue_ids:
                 return {"is_complete": True, "reason": "path_found"}
 
-            for child_id in children_map.get(current, []):
-                if child_id not in visited and child_id in completed_ids:
-                    visited.add(child_id)
-                    queue.append(child_id)
+            for neighbor_id in adjacency.get(current, []):
+                if neighbor_id not in visited and neighbor_id in completed_ids:
+                    visited.add(neighbor_id)
+                    queue.append(neighbor_id)
 
     return {"is_complete": False, "reason": "no_complete_path"}
 

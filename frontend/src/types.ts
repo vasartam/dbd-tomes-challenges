@@ -33,9 +33,9 @@ export type ChallengeNodeType = 'prologue' | 'epilogue' | 'challenge' | 'reward'
 export function getNodeType(name: string | null): ChallengeNodeType {
   if (!name) return 'challenge'
   const lowerName = name.toLowerCase()
-  if (lowerName === 'prologue') return 'prologue'
-  if (lowerName === 'epilogue') return 'epilogue'
-  if (lowerName === 'reward') return 'reward'
+  if (lowerName === 'prologue' || lowerName === 'пролог') return 'prologue'
+  if (lowerName === 'epilogue' || lowerName === 'эпилог') return 'epilogue'
+  if (lowerName === 'reward' || lowerName === 'награда') return 'reward'
   return 'challenge'
 }
 
@@ -56,9 +56,6 @@ export interface Challenge {
   role: 'survivor' | 'killer' | 'shared' | string
   objective: string | null
   rewards: Reward[]
-  // Позиция в сетке (для древовидной структуры)
-  grid_column: number | null
-  grid_row: number | null
   // joined fields from list_challenges
   level_number?: number
   archive_key?: string
@@ -66,8 +63,8 @@ export interface Challenge {
 }
 
 export interface Dependency {
-  child_id: number
-  parent_id: number
+  a_id: number
+  b_id: number
 }
 
 export interface ChallengeInfo {
@@ -76,8 +73,9 @@ export interface ChallengeInfo {
   name: string | null
   role: string
   objective: string | null
-  grid_column: number | null
-  grid_row: number | null
+  // Позиция на графе (мировые координаты)
+  pos_x: number | null
+  pos_y: number | null
 }
 
 export interface PageDependencies {

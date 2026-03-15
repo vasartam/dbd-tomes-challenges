@@ -94,16 +94,16 @@ export const api = {
     req<PageDependencies>('GET', `/pages/${pageId}/dependencies`, undefined, lang),
 
   // Admin: Position & Dependencies
-  adminSetChallengePosition: (challengeKey: string, gridColumn: number, gridRow: number) =>
-    req<{ challenge_key: string; grid_column: number; grid_row: number }>(
+  adminSetChallengePosition: (challengeKey: string, posX: number, posY: number) =>
+    req<{ challenge_key: string; pos_x: number; pos_y: number }>(
       'PUT', `/admin/challenges/${challengeKey}/position`,
-      { grid_column: gridColumn, grid_row: gridRow }
+      { pos_x: posX, pos_y: posY }
     ),
 
-  adminSetChallengeDependencies: (challengeKey: string, parentKeys: string[]) =>
-    req<{ challenge_key: string; parent_keys: string[] }>(
+  adminSetChallengeDependencies: (challengeKey: string, linkedKeys: string[]) =>
+    req<{ challenge_key: string; linked_keys: string[] }>(
       'POST', `/admin/challenges/${challengeKey}/dependencies`,
-      { parent_keys: parentKeys }
+      { linked_keys: linkedKeys }
     ),
 
   adminAutoLayoutPage: (pageId: number) =>

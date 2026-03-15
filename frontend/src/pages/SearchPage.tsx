@@ -13,17 +13,23 @@ import {
 } from '@vkontakte/vkui'
 import { Icon28CancelCircleOutline } from '@vkontakte/icons'
 import { observer } from 'mobx-react-lite'
+import { useSearchParams } from 'next/navigation'
 import { catalogStore, progressStore, langStore } from '../stores'
+import { getNodeType } from '../types'
 import ChallengeCard from '../components/ChallengeCard'
 import type { Challenge } from '../types'
+
+const MAX_VISIBLE = 50
 
 export default observer(function SearchPage() {
   const t = (key: string, vars?: Record<string, string | number>) => langStore.t(key, vars)
   const lang = langStore.lang
 
-  const [query, setQuery] = useState('')
-  const [role, setRole] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
+  const searchParams = useSearchParams()
+
+  const [query, setQuery] = useState(() => searchParams?.get('q') ?? '')
+  const [role, setRole] = useState(() => searchParams?.get('role') ?? '')
+  const [statusFilter, setStatusFilter] = useState(() => searchParams?.get('status') ?? 'all')
   const [challenges, setChallenges] = useState<Challenge[]>([])
   const [loading, setLoading] = useState(false)
   const [snackbar, setSnackbar] = useState<React.ReactNode>(null)
@@ -52,6 +58,16 @@ export default observer(function SearchPage() {
     )
   }
 
+  // Синхронизируем параметры в URL без перезагрузки страницы
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (query)                  params.set('q', query)
+    if (role)                   params.set('role', role)
+    if (statusFilter !== 'all') params.set('status', statusFilter)
+    const qs = params.toString()
+    window.history.replaceState(null, '', qs ? `/search?${qs}` : '/search')
+  }, [query, role, statusFilter])
+
   const doSearch = useCallback(() => {
     setLoading(true)
     catalogStore.searchChallenges({
@@ -73,10 +89,14 @@ export default observer(function SearchPage() {
   }, [])
 
   const filtered = challenges.filter(c => {
+    if (getNodeType(c.name) !== 'challenge') return false
     if (statusFilter === 'completed') return progressStore.isCompleted(c.challenge_key)
     if (statusFilter === 'available') return !progressStore.isCompleted(c.challenge_key)
     return true
   })
+
+  const visible = filtered.slice(0, MAX_VISIBLE)
+  const hasMore = filtered.length > MAX_VISIBLE
 
   const handleToggle = async (challenge: Challenge) => {
     try {
@@ -85,6 +105,12 @@ export default observer(function SearchPage() {
       showError((e as Error).message)
     }
   }
+
+  const headerText = loading
+    ? t('search.searching')
+    : hasMore
+      ? t('search.foundMany', { shown: MAX_VISIBLE, total: filtered.length })
+      : t('search.found', { n: filtered.length })
 
   return (
     <>
@@ -113,9 +139,7 @@ export default observer(function SearchPage() {
       </Group>
 
       <Group>
-        <Header>
-          {loading ? t('search.searching') : t('search.found', { n: filtered.length })}
-        </Header>
+        <Header>{headerText}</Header>
 
         {loading ? (
           <Div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}>
@@ -123,7 +147,7 @@ export default observer(function SearchPage() {
           </Div>
         ) : (
           <Div style={{ paddingBottom: 72, display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {filtered.map((challenge, idx) => (
+            {visible.map((challenge, idx) => (
               <React.Fragment key={challenge.challenge_key}>
                 {idx > 0 && <div style={{ height: 8 }} />}
                 <ChallengeCard
@@ -134,7 +158,7 @@ export default observer(function SearchPage() {
                 />
               </React.Fragment>
             ))}
-            {filtered.length === 0 && !loading && (
+            {visible.length === 0 && (
               <Div>
                 <Text style={{ textAlign: 'center', color: 'var(--vkui--color_text_secondary)' }}>
                   {t('search.noResults')}
