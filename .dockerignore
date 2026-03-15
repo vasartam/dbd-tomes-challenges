@@ -10,3 +10,5 @@ __pycache__
 *.pyc
 venv/
 .env
+frontend/public/challenge_icons
+scrape_state.json

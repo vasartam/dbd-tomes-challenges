@@ -3,9 +3,13 @@ services:
     image: ghcr.io/${GITHUB_REPOSITORY}:backend-latest
     restart: unless-stopped
     env_file: .env
+    environment:
+      ICONS_DIR: /app/data/challenge_icons
     volumes:
       # База данных живёт на хосте — переживает пересоздание контейнера
       - ./db.sqlite:/app/db.sqlite
+      # Иконки заданий — скачиваются скрейпером, раздаются через /challenge_icons/
+      - challenge_icons:/app/data/challenge_icons
     networks:
       - app
 
@@ -37,3 +41,6 @@ services:
 networks:
   app:
     driver: bridge
+
+volumes:
+  challenge_icons:

@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 load_dotenv()
-from flask import Flask, g, jsonify, request
+from flask import Flask, g, jsonify, request, send_from_directory
 from flask_jwt_extended import (
     JWTManager,
     create_access_token,
@@ -51,7 +51,7 @@ ARCHIVES_URL = "https://dbd.tricky.lol/api/archives"
 
 WIKI_BASE  = "https://deadbydaylight.fandom.com"
 WIKI_API   = f"{WIKI_BASE}/api.php"
-ICONS_DIR         = Path(__file__).parent / "frontend" / "public" / "challenge_icons"
+ICONS_DIR         = Path(os.environ.get("ICONS_DIR", str(Path(__file__).parent / "frontend" / "public" / "challenge_icons")))
 SCRAPE_DELAY      = 0.5
 _SCRAPE_STATE_FILE = Path(__file__).parent / "scrape_state.json"
 
@@ -62,6 +62,11 @@ app = Flask(__name__)
 app.config["JWT_SECRET_KEY"] = os.environ["JWT_SECRET_KEY"]
 app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(days=7)
 jwt = JWTManager(app)
+
+
+@app.get("/challenge_icons/<path:filename>")
+def serve_challenge_icon(filename: str):
+    return send_from_directory(ICONS_DIR, filename)
 
 
 # ─── База данных ──────────────────────────────────────────────────────────────
