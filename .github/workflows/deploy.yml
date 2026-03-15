@@ -65,6 +65,8 @@ jobs:
           envs:     GITHUB_REPOSITORY
           script: |
             cd /srv/dbd-tomes-challenges
+            # Подтягиваем актуальные конфиги (docker-compose.yml, nginx.conf и др.)
+            git pull
             # Логинимся в ghcr.io под токеном, сохранённым на сервере
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             # Скачиваем свежие образы и перезапускаем
