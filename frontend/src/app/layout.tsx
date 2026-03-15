@@ -1,5 +1,6 @@
 'use client'
 import '@vkontakte/vkui/dist/vkui.css'
+import './theme.css'
 import './globals.css'
 import { ConfigProvider, AppRoot } from '@vkontakte/vkui'
 import { useEffect, useState } from 'react'

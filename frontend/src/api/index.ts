@@ -111,6 +111,19 @@ export const api = {
       'POST', `/admin/pages/${pageId}/auto-layout`
     ),
 
+  adminScrapeIcons: () =>
+    req<{ message: string }>('POST', '/admin/scrape-icons'),
+
+  adminScrapeIconsStatus: () =>
+    req<{
+      running: boolean
+      total: number
+      current: number
+      last_run: string | null
+      last_matched: number
+      last_downloaded: number
+    }>('GET', '/admin/scrape-icons/status'),
+
   // Completion status
   getTomeCompletion: (archiveKey: string) =>
     req<TomeCompletionStatus>('GET', `/user/tomes/${archiveKey}/completion`),

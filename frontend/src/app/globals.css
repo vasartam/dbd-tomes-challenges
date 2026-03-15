@@ -1,123 +1,23 @@
-/*
-  Dead by Daylight — тема для VK UI.
-  ConfigProvider colorScheme="dark" добавляет класс vkui--vkBase--dark на <html>.
-  Селектор html.vkui--vkBase--dark имеет специфичность 0,1,1 и перебивает
-  VKUI-токены с специфичностью 0,1,0.
-*/
-
-html.vkui--vkBase--dark {
-
-  /* ─── Акцент: синий → кроваво-красный ─── */
-
-  --vkui--color_background_accent:                  #c41230;
-  --vkui--color_background_accent--hover:           #e0142f;
-  --vkui--color_background_accent--active:          #a30e27;
-
-  --vkui--color_background_accent_themed:           #c41230;
-  --vkui--color_background_accent_themed--hover:    #e0142f;
-  --vkui--color_background_accent_themed--active:   #a30e27;
-
-  --vkui--color_background_accent_alternative:          #c41230;
-  --vkui--color_background_accent_alternative--hover:   #e0142f;
-  --vkui--color_background_accent_alternative--active:  #a30e27;
-
-  --vkui--color_background_accent_tint:             #6e0b1b;
-  --vkui--color_background_accent_tint--hover:      #7a0d1e;
-  --vkui--color_background_accent_tint--active:     #8a0d22;
-
-  --vkui--color_background_accent_themed_alpha:           rgba(196, 18, 48, 0.20);
-  --vkui--color_background_accent_themed_alpha--hover:    rgba(196, 18, 48, 0.28);
-  --vkui--color_background_accent_themed_alpha--active:   rgba(196, 18, 48, 0.36);
-
-  --vkui--color_text_accent:        #e8142f;
-  --vkui--color_text_accent_themed: #e8142f;
-
-  --vkui--color_text_link:          #e8142f;
-  --vkui--color_text_link_themed:   #e8142f;
-  --vkui--color_text_link_tint:     #b85060;
-
-  --vkui--color_icon_accent:        #e8142f;
-  --vkui--color_icon_accent_themed: #e8142f;
-
-  --vkui--color_stroke_accent:        #c41230;
-  --vkui--color_stroke_accent_themed: #c41230;
-
-  --vkui--color_accent_blue:      #c41230;
-  --vkui--color_accent_secondary: #9e0e27;
-
-  --vkui--color_button_text:   #e8142f;
-  --vkui--color_button_icon:   #e8142f;
-  --vkui--color_button_stroke: #c41230;
-
-  --vkui--color_panel_header_icon: #e8142f;
-
-  --vkui--color_write_bar_icon:     #e8142f;
-  --vkui--color_action_sheet_text:  #e8142f;
-
-  /* Tabbar */
-  --vkui--color_tabbar_text_inactive: #604e48;
-
-  /* Segmented control */
-  --vkui--color_segmented_control: #201c19;
-
-  /* ─── Фоны: тёплые тёмные ─── */
-
-  --vkui--color_background:          #0d0b0a;
-  --vkui--color_background_content:  #171310;
-  --vkui--color_background_secondary:       #201c19;
-  --vkui--color_background_secondary_alpha: rgba(255, 255, 255, 0.06);
-  --vkui--color_background_tertiary:        #1a1613;
-
-  --vkui--color_background_modal:         #201c19;
-
-  --vkui--color_header_background:    #171310;
-  --vkui--color_field_background:     #1a1613;
-  --vkui--color_search_field_background: #1a1613;
-
-  --vkui--color_skeleton_from: #1e1a17;
-  --vkui--color_skeleton_to:   #2a2420;
-
-  /* ─── Текст ─── */
-
-  --vkui--color_text_primary:   #e8ddd4;
-  --vkui--color_text_secondary: #8a7e74;
-  --vkui--color_text_subhead:   #7a6e64;
-  --vkui--color_text_tertiary:  #5a4e44;
-  --vkui--color_text_muted:     #e8ddd4;
-
-  /* ─── Иконки ─── */
-
-  --vkui--color_icon_primary:   #e1d5cc;
-  --vkui--color_icon_secondary: #8a7e74;
-  --vkui--color_icon_medium:    #8a7e74;
-  --vkui--color_icon_tertiary:  #5a4e44;
-
-  /* ─── Разделители и обводки ─── */
-
-  --vkui--color_separator_primary:       #2e2520;
-  --vkui--color_separator_primary_alpha: rgba(255, 255, 255, 0.09);
-  --vkui--color_separator_secondary:     #231f1c;
-
-  --vkui--color_stroke_primary: #e1d5cc;
-
-  --vkui--color_field_border_alpha:         rgba(255, 255, 255, 0.12);
-  --vkui--color_field_border_alpha--hover:  rgba(255, 255, 255, 0.18);
-  --vkui--color_field_border_alpha--active: rgba(255, 255, 255, 0.24);
-
-  --vkui--color_write_bar_input_background:   #1a1613;
-  --vkui--color_write_bar_input_border:       #2e2520;
-  --vkui--color_write_bar_input_border_alpha: rgba(255, 255, 255, 0.10);
-
-  --vkui--color_track_background: #2e2520;
-  --vkui--color_track_buffer:     #6a2030;
-}
+/* Структурные CSS-правила (не токены темы).
+   Токены темы DBD находятся в theme.css. */
 
 body {
+  margin: 0;
   background-color: #0d0b0a;
   color: #e8ddd4;
 }
 
 /* Увеличить высоту выпадающего списка CustomSelect */
 .vkuiCustomSelectDropdown__in {
-  max-height: 360px !important;
+  max-height: 360px;
+}
+
+/* Снекбар выше таббара */
+.vkuiSnackbar {
+  bottom: 80px;
+}
+
+/* Текст под иконками таббара */
+.vkuiTabbarItem__label {
+  font-size: 13px;
 }

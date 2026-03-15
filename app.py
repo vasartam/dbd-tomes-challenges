@@ -23,10 +23,15 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import timedelta
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 from functools import wraps
+from pathlib import Path
+from urllib.parse import urlparse, unquote
 
 import requests
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -43,6 +48,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 DB_PATH = os.environ["DB_PATH"]
 ARCHIVES_URL = "https://dbd.tricky.lol/api/archives"
+
+WIKI_BASE  = "https://deadbydaylight.fandom.com"
+WIKI_API   = f"{WIKI_BASE}/api.php"
+ICONS_DIR         = Path(__file__).parent / "frontend" / "public" / "challenge_icons"
+SCRAPE_DELAY      = 0.5
+_SCRAPE_STATE_FILE = Path(__file__).parent / "scrape_state.json"
 
 # Никнейм: латинские буквы/цифры/_, не начинается и не заканчивается на _
 NICKNAME_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9_]*[a-zA-Z0-9])?$")
@@ -844,7 +855,7 @@ def get_page_dependencies(page_id: int):
         return jsonify({"error": "Page not found"}), 404
 
     challenges = db.execute("""
-        SELECT id, challenge_key, name, role, objective, pos_x, pos_y, name_ru, objective_ru
+        SELECT id, challenge_key, name, role, objective, pos_x, pos_y, name_ru, objective_ru, icon_url
         FROM challenges
         WHERE page_id = ?
         ORDER BY node_index
@@ -1019,6 +1030,280 @@ def auto_layout_page(page_id: int):
 
     db.commit()
     return jsonify({"message": "Auto-layout applied", "challenges_updated": len(challenges)})
+
+
+# ─── Скрейпинг иконок ─────────────────────────────────────────────────────────
+
+_wiki_session = requests.Session()
+_wiki_session.headers.update({"User-Agent": "DBD-Tomes-Challenges/1.0 (icon scraper)"})
+
+
+def _wiki_get(params: dict) -> dict:
+    params.setdefault("format", "json")
+    r = _wiki_session.get(WIKI_API, params=params, timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
+def _get_tome_wiki_pages() -> list[dict]:
+    data = _wiki_get({"action": "parse", "page": "The Archives", "prop": "links"})
+    links = data.get("parse", {}).get("links", [])
+    return [
+        {"title": l["*"], "pageid": l.get("pageid", 0), "ns": l.get("ns", 0)}
+        for l in links
+        if re.match(r"(Event |Game Mode |Modifier )?Tome \d+ - ", l.get("*", ""))
+    ]
+
+
+def _parse_tome_wiki_page(title: str) -> dict[str, str]:
+    data = _wiki_get({"action": "parse", "page": title, "prop": "text", "disablelimitreport": 1})
+    if "parse" not in data:
+        return {}
+    html = data["parse"]["text"]["*"]
+    soup = BeautifulSoup(html, "html.parser")
+    result: dict[str, str] = {}
+
+    for table in soup.find_all("table", class_="wikitable"):
+        for row in table.find_all("tr"):
+            cells = row.find_all(["td", "th"])
+            if len(cells) < 2:
+                continue
+            name_text = cells[0].get_text(strip=True)
+            skip_names = ("challenge", "challenges", "", "regular challenges",
+                          "nightmare challenges", "special challenges")
+            if not name_text or name_text.lower() in skip_names:
+                continue
+            # Пропускаем строки, где первая ячейка занимает всю строку (colspan)
+            first_colspan = int(cells[0].get("colspan", 1))
+            if first_colspan > 2:
+                continue
+            normalized = re.sub(r"\s+", " ", name_text.strip().lower())
+            for cell in cells[1:]:  # пропускаем ячейку с названием
+                img = cell.find("img")
+                if img:
+                    src = img.get("data-src") or img.get("src", "")
+                    if not src or "data:image" in src:
+                        continue
+                    src = re.sub(r"/scale-to-width-down/\d+", "", src)
+                    if any(kw in src.lower() for kw in [
+                        "challengeicon", "survivor", "killer", "iconhelpload",
+                        "archivesgeneral", "iconhelp_archives",
+                    ]):
+                        result[normalized] = src
+                        break
+
+    time.sleep(SCRAPE_DELAY)
+    return result
+
+
+def _run_scrape_icons() -> tuple[int, int]:
+    """Скачивает иконки заданий с вики. Возвращает (matched, downloaded)."""
+    ICONS_DIR.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+
+    # Добавить колонку icon_url если нет
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(challenges)").fetchall()]
+    if "icon_url" not in cols:
+        conn.execute("ALTER TABLE challenges ADD COLUMN icon_url TEXT")
+        conn.commit()
+
+    wiki_pages = _get_tome_wiki_pages()
+    tomes = conn.execute("SELECT id, archive_key, name FROM tomes").fetchall()
+
+    def find_wiki_page(archive_key: str, tome_name: str | None) -> str | None:
+        # Стандартные тома: Tome01, Tome02, ...
+        m = re.match(r"[Tt]ome(\d+)$", archive_key)
+        if m:
+            num = int(m.group(1))
+            candidates = [p for p in wiki_pages if re.match(rf"^Tome {num} - ", p["title"])]
+            if not candidates:
+                return None
+            if tome_name:
+                subtitle_m = re.search(r" - (.+)$", tome_name)
+                if subtitle_m:
+                    subtitle = subtitle_m.group(1).strip().lower()
+                    for page in candidates:
+                        if subtitle in page["title"].lower():
+                            return page["title"]
+            return candidates[0]["title"]
+
+        # Event/Game Mode/Modifier тома: матчинг по имени + год + версия
+        if not tome_name:
+            return None
+
+        year_m = re.search(r"(\d{4})", archive_key)
+        ver_m  = re.search(r"[Vv](\d+)$", archive_key)
+        year    = year_m.group(1) if year_m else None
+        version = int(ver_m.group(1)) if ver_m else None
+
+        def _words(s: str) -> set[str]:
+            stop = {"the", "a", "an", "of", "by", "in", "game", "event", "tome", "mode", "modifier"}
+            return set(re.sub(r"[^a-z0-9]", " ", s.lower()).split()) - stop
+
+        db_words = _words(tome_name)
+
+        best_title: str | None = None
+        best_score = -1
+        for page in wiki_pages:
+            wiki_words = _words(page["title"])
+            score = len(db_words & wiki_words)
+            # Бонусы применяем только при наличии хотя бы одного совпадения по словам
+            if score >= 1 and year and year in page["title"]:
+                score += 3
+            if score >= 1 and version is not None:
+                wiki_num_m = re.search(r"Tome (\d+) - ", page["title"])
+                if wiki_num_m and int(wiki_num_m.group(1)) == version:
+                    score += 2
+            if score > best_score:
+                best_score = score
+                best_title = page["title"]
+
+        return best_title if best_score >= 1 else None
+
+    # Считаем общее количество заданий для прогресса
+    total_challenges = conn.execute("SELECT COUNT(*) FROM challenges").fetchone()[0]
+    _scrape_state["total"]   = total_challenges
+    _scrape_state["current"] = 0
+
+    total_matched = 0
+    total_downloaded = 0
+    processed = 0
+
+    for tome in tomes:
+        archive_key = tome["archive_key"]
+        wiki_title = find_wiki_page(archive_key, tome["name"])
+
+        challenges = conn.execute("""
+            SELECT c.id, c.challenge_key, c.name
+            FROM challenges c
+            JOIN pages p ON p.id = c.page_id
+            WHERE p.tome_id = ?
+        """, (tome["id"],)).fetchall()
+
+        if not wiki_title:
+            processed += len(challenges)
+            _scrape_state["current"] = processed
+            continue
+
+        wiki_icons = _parse_tome_wiki_page(wiki_title)
+
+        for ch in challenges:
+            processed += 1
+            _scrape_state["current"] = processed
+
+            if not ch["name"]:
+                continue
+            normalized = re.sub(r"\s+", " ", ch["name"].strip().lower())
+            icon_url = wiki_icons.get(normalized)
+            if not icon_url:
+                for wname, wurl in wiki_icons.items():
+                    if normalized in wname or wname in normalized:
+                        icon_url = wurl
+                        break
+            if not icon_url:
+                continue
+
+            url_path = unquote(urlparse(icon_url).path)
+            fname_match = re.search(r'/([^/]+\.(png|jpg|webp|gif))(?:/|$)', url_path, re.IGNORECASE)
+            if not fname_match:
+                continue
+            original_fname = fname_match.group(1)
+            dest = ICONS_DIR / original_fname
+
+            if not dest.exists():
+                try:
+                    r = _wiki_session.get(icon_url, timeout=15, stream=True)
+                    r.raise_for_status()
+                    with open(dest, "wb") as f:
+                        for chunk in r.iter_content(8192):
+                            f.write(chunk)
+                    time.sleep(0.2)
+                    total_downloaded += 1
+                except Exception:
+                    continue
+
+            rel_path = f"/challenge_icons/{original_fname}"
+            conn.execute("UPDATE challenges SET icon_url = ? WHERE id = ?", (rel_path, ch["id"]))
+            total_matched += 1
+
+        conn.commit()
+
+    conn.close()
+    return total_matched, total_downloaded
+
+
+_scrape_state: dict = {
+    "running":        False,
+    "total":          0,
+    "current":        0,
+    "last_run":       None,
+    "last_matched":   0,
+    "last_downloaded": 0,
+}
+
+
+def _load_scrape_state() -> None:
+    if _SCRAPE_STATE_FILE.exists():
+        try:
+            data = json.loads(_SCRAPE_STATE_FILE.read_text(encoding="utf-8"))
+            for k in ("last_run", "last_matched", "last_downloaded"):
+                if k in data:
+                    _scrape_state[k] = data[k]
+        except Exception:
+            pass
+
+
+_load_scrape_state()
+
+
+@app.post("/api/admin/scrape-icons")
+@admin_required
+def scrape_icons_endpoint():
+    """
+    Запустить скрипт скачивания иконок в фоновом потоке. Только для админов.
+    Ответ 200: { message }
+    Ответ 409: если скрипт уже запущен
+    """
+    if _scrape_state["running"]:
+        return jsonify({"error": "Scraping already in progress"}), 409
+
+    def run():
+        _scrape_state["running"] = True
+        try:
+            matched, downloaded = _run_scrape_icons()
+            _scrape_state["last_matched"]    = matched
+            _scrape_state["last_downloaded"] = downloaded
+            _scrape_state["last_run"]        = datetime.now(timezone.utc).isoformat()
+            _SCRAPE_STATE_FILE.write_text(json.dumps({
+                "last_run":        _scrape_state["last_run"],
+                "last_matched":    _scrape_state["last_matched"],
+                "last_downloaded": _scrape_state["last_downloaded"],
+            }, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            app.logger.error(f"scrape-icons error: {e}")
+        finally:
+            _scrape_state["running"] = False
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"message": "Icon scraping started in background"})
+
+
+@app.get("/api/admin/scrape-icons/status")
+@admin_required
+def scrape_icons_status():
+    """
+    Статус фонового скрейпинга иконок. Только для админов.
+    Ответ 200: { running: bool }
+    """
+    return jsonify({
+        "running":        _scrape_state["running"],
+        "total":          _scrape_state["total"],
+        "current":        _scrape_state["current"],
+        "last_run":       _scrape_state["last_run"],
+        "last_matched":   _scrape_state["last_matched"],
+        "last_downloaded": _scrape_state["last_downloaded"],
+    })
 
 
 # ─── Статус выполнения ────────────────────────────────────────────────────────

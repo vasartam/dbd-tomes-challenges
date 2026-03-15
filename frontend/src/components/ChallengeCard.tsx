@@ -66,7 +66,7 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
 
   const renderIcon = () => {
     if (isDone) {
-      return <Icon24CheckCircleOutline fill="var(--vkui--color_icon_positive)" />
+      return <Icon24CheckCircleOutline fill="#4ade80" />
     }
     if (isLocked) {
       return <Icon24LockOutline fill="var(--vkui--color_icon_tertiary)" />
@@ -91,7 +91,6 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
           opacity: isLocked ? 0.5 : 1,
           cursor: isLocked ? 'not-allowed' : 'pointer',
           userSelect: 'none',
-          background: isDone ? 'var(--vkui--color_background_positive)' : undefined,
           borderColor: nodeColor,
           borderWidth: 2,
         }}
@@ -99,19 +98,9 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
       >
         <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
           {renderIcon()}
-          <Text
-            weight="2"
-            style={{
-              color: isDone ? 'var(--vkui--color_text_contrast)' : nodeColor,
-            }}
-          >
+          <Text weight="2" style={{ color: nodeColor }}>
             {nodeTypeLabel || challenge.name || challenge.challenge_key}
           </Text>
-          {isDone && (
-            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--vkui--color_text_contrast)' }}>
-              ✓
-            </span>
-          )}
         </div>
       </Card>
     )
@@ -124,7 +113,6 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
         opacity: isLocked ? 0.5 : 1,
         cursor: isLocked ? 'not-allowed' : 'pointer',
         userSelect: 'none',
-        background: isDone ? 'var(--vkui--color_background_positive)' : undefined,
       }}
       onClick={onClick}
     >
@@ -139,11 +127,9 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
               <Text
                 weight="2"
                 style={{
-                  color: isDone
-                    ? 'var(--vkui--color_text_contrast)'
-                    : isLocked
-                      ? 'var(--vkui--color_text_secondary)'
-                      : 'var(--vkui--color_text_primary)',
+                  color: isLocked
+                    ? 'var(--vkui--color_text_secondary)'
+                    : 'var(--vkui--color_text_primary)',
                   flex: 1,
                 }}
               >
@@ -168,9 +154,7 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
             {challenge.objective && (
               <Caption
                 style={{
-                  color: isDone
-                    ? 'var(--vkui--color_text_contrast_secondary)'
-                    : 'var(--vkui--color_text_secondary)',
+                  color: 'var(--vkui--color_text_secondary)',
                   marginTop: 4,
                   display: '-webkit-box',
                   WebkitLineClamp: 2,
@@ -184,7 +168,7 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
 
             {subtitle && (
               <Caption style={{
-                color: isDone ? 'var(--vkui--color_text_contrast_secondary)' : 'var(--vkui--color_text_tertiary)',
+                color: 'var(--vkui--color_text_tertiary)',
                 marginTop: 4
               }}>
                 {subtitle}
@@ -200,12 +184,8 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
                       fontSize: 11,
                       padding: '1px 7px',
                       borderRadius: 10,
-                      background: isDone
-                        ? 'rgba(255,255,255,0.2)'
-                        : 'var(--vkui--color_background_secondary)',
-                      color: isDone
-                        ? 'var(--vkui--color_text_contrast)'
-                        : 'var(--vkui--color_text_secondary)',
+                      background: 'var(--vkui--color_background_secondary)',
+                      color: 'var(--vkui--color_text_secondary)',
                     }}
                   >
                     {r.id}: {r.amount}

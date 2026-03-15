@@ -1,0 +1,236 @@
+/*
+  Dead by Daylight — кастомная тема для VKUI.
+
+  VKUI тёмная тема задаёт токены на классе .vkui--vkBase--dark.
+  ConfigProvider с colorScheme="dark" добавляет этот класс на <html>.
+  Наш селектор html.vkui--vkBase--dark имеет специфичность (0,1,1)
+  против (0,1,0) у VKUI — поэтому наши токены всегда перебивают дефолтные.
+
+  Принцип: всё, что в VKUI-тёмной теме синее (#529ef4, #fff-themed) —
+  заменяем на кроваво-красный соответствующего оттенка.
+
+  Красная палитра:
+    #c41230  — основной кроваво-красный (фоны кнопок, обводки)
+    #e0142f  — светлее (hover фоны)
+    #a30e27  — темнее (active фоны)
+    #e8142f  — яркий красный (текст, иконки)
+    #f0253f  — светлее (hover текст/иконки)
+    #cc1029  — темнее (active текст/иконки)
+    #6e0b1b  — очень тёмный (tint фоны)
+*/
+
+html.vkui--vkBase--dark {
+
+  /* ───────────────────────────────────────────────
+     АКЦЕНТНЫЙ ФОН (синий → красный)
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_background_accent:                        #c41230;
+  --vkui--color_background_accent--hover:                 #e0142f;
+  --vkui--color_background_accent--active:                #a30e27;
+
+  --vkui--color_background_accent_themed:                 #c41230;
+  --vkui--color_background_accent_themed--hover:          #e0142f;
+  --vkui--color_background_accent_themed--active:         #a30e27;
+
+  --vkui--color_background_accent_alternative:            #c41230;
+  --vkui--color_background_accent_alternative--hover:     #e0142f;
+  --vkui--color_background_accent_alternative--active:    #a30e27;
+
+  --vkui--color_background_accent_tint:                   #6e0b1b;
+  --vkui--color_background_accent_tint--hover:            #7a0d1e;
+  --vkui--color_background_accent_tint--active:           #8a0d22;
+
+  --vkui--color_background_accent_themed_alpha:           rgba(196, 18, 48, 0.20);
+  --vkui--color_background_accent_themed_alpha--hover:    rgba(196, 18, 48, 0.28);
+  --vkui--color_background_accent_themed_alpha--active:   rgba(196, 18, 48, 0.36);
+
+  /* ───────────────────────────────────────────────
+     АКЦЕНТНЫЙ ТЕКСТ (синий → красный)
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_text_accent:                  #e8142f;
+  --vkui--color_text_accent--hover:           #f0253f;
+  --vkui--color_text_accent--active:          #cc1029;
+
+  --vkui--color_text_accent_themed:           #e8142f;
+  --vkui--color_text_accent_themed--hover:    #f0253f;
+  --vkui--color_text_accent_themed--active:   #cc1029;
+
+  --vkui--color_text_link:                    #e8142f;
+  --vkui--color_text_link--hover:             #f0253f;
+  --vkui--color_text_link--active:            #cc1029;
+
+  --vkui--color_text_link_themed:             #e8142f;
+  --vkui--color_text_link_themed--hover:      #f0253f;
+  --vkui--color_text_link_themed--active:     #cc1029;
+
+  --vkui--color_text_link_tint:               #b85060;
+
+  /* ───────────────────────────────────────────────
+     АКЦЕНТНЫЕ ИКОНКИ (синий → красный)
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_icon_accent:                  #e8142f;
+  --vkui--color_icon_accent--hover:           #f0253f;
+  --vkui--color_icon_accent--active:          #cc1029;
+
+  --vkui--color_icon_accent_themed:           #e8142f;
+  --vkui--color_icon_accent_themed--hover:    #f0253f;
+  --vkui--color_icon_accent_themed--active:   #cc1029;
+
+  /* ───────────────────────────────────────────────
+     АКЦЕНТНЫЕ ОБВОДКИ (синий → красный)
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_stroke_accent:                #c41230;
+  --vkui--color_stroke_accent--hover:         #e0142f;
+  --vkui--color_stroke_accent--active:        #a30e27;
+
+  --vkui--color_stroke_accent_themed:         #c41230;
+  --vkui--color_stroke_accent_themed--hover:  #e0142f;
+  --vkui--color_stroke_accent_themed--active: #a30e27;
+
+  --vkui--color_stroke_primary:               #e1d5cc;
+
+  /* ───────────────────────────────────────────────
+     ACCENT ALIASES (синий → красный)
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_accent_blue:                  #c41230;
+  --vkui--color_accent_blue--hover:           #e0142f;
+  --vkui--color_accent_blue--active:          #a30e27;
+
+  --vkui--color_accent_secondary:             #9e0e27;
+
+  /* ───────────────────────────────────────────────
+     КНОПКИ (белый → красный для outline/tertiary/link)
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_button_text:                  #e8142f;
+  --vkui--color_button_text--hover:           #f0253f;
+  --vkui--color_button_text--active:          #cc1029;
+
+  --vkui--color_button_icon:                  #e8142f;
+  --vkui--color_button_icon--hover:           #f0253f;
+  --vkui--color_button_icon--active:          #cc1029;
+
+  --vkui--color_button_stroke:                #c41230;
+  --vkui--color_button_stroke--hover:         #e0142f;
+  --vkui--color_button_stroke--active:        #a30e27;
+
+  /* ───────────────────────────────────────────────
+     PANEL HEADER / WRITE BAR / ACTION SHEET
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_panel_header_icon:            #e8142f;
+
+  --vkui--color_write_bar_icon:               #e8142f;
+
+  --vkui--color_action_sheet_text:            #e8142f;
+
+  /* ───────────────────────────────────────────────
+     ТЁПЛЫЕ ТЁМНЫЕ ФОНЫ (вместо нейтральных VKUI)
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_background:                   #0d0b0a;
+  --vkui--color_background--hover:            #120f0d;
+  --vkui--color_background--active:           #181310;
+
+  --vkui--color_background_content:           #171310;
+  --vkui--color_background_content--hover:    #1c1714;
+  --vkui--color_background_content--active:   #211c18;
+
+  --vkui--color_background_secondary:         #201c19;
+  --vkui--color_background_secondary--hover:  #28231f;
+  --vkui--color_background_secondary--active: #302b27;
+
+  --vkui--color_background_secondary_alpha:           rgba(255, 255, 255, 0.06);
+  --vkui--color_background_secondary_alpha--hover:    rgba(255, 255, 255, 0.09);
+  --vkui--color_background_secondary_alpha--active:   rgba(255, 255, 255, 0.12);
+
+  --vkui--color_background_tertiary:          #1a1613;
+  --vkui--color_background_tertiary--hover:   #1f1a16;
+  --vkui--color_background_tertiary--active:  #241e1a;
+
+  --vkui--color_background_modal:             #201c19;
+  --vkui--color_background_modal--hover:      #28231f;
+  --vkui--color_background_modal--active:     #302b27;
+
+  --vkui--color_header_background:            #171310;
+  --vkui--color_header_background--hover:     #1c1714;
+  --vkui--color_header_background--active:    #211c18;
+
+  --vkui--color_field_background:             #1a1613;
+  --vkui--color_field_background--hover:      #1f1a16;
+  --vkui--color_field_background--active:     #241e1a;
+
+  --vkui--color_search_field_background:      #1a1613;
+  --vkui--color_search_field_background--hover:  #1f1a16;
+  --vkui--color_search_field_background--active: #241e1a;
+
+  --vkui--color_background_contrast_themed:          #201c19;
+  --vkui--color_background_contrast_themed--hover:   #28231f;
+  --vkui--color_background_contrast_themed--active:  #302b27;
+
+  /* ───────────────────────────────────────────────
+     СКЕЛЕТОН
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_skeleton_from:  #1e1a17;
+  --vkui--color_skeleton_to:    #2a2420;
+
+  /* ───────────────────────────────────────────────
+     ТЁПЛЫЙ ТЕКСТ
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_text_primary:   #e8ddd4;
+  --vkui--color_text_secondary: #8a7e74;
+  --vkui--color_text_subhead:   #7a6e64;
+  --vkui--color_text_tertiary:  #5a4e44;
+  --vkui--color_text_muted:     #e8ddd4;
+
+  /* ───────────────────────────────────────────────
+     ТЁПЛЫЕ ИКОНКИ
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_icon_primary:   #e1d5cc;
+  --vkui--color_icon_secondary: #8a7e74;
+  --vkui--color_icon_medium:    #8a7e74;
+  --vkui--color_icon_tertiary:  #5a4e44;
+
+  /* ───────────────────────────────────────────────
+     РАЗДЕЛИТЕЛИ И ОБВОДКИ
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_separator_primary:            #2e2520;
+  --vkui--color_separator_primary_alpha:      rgba(255, 255, 255, 0.09);
+  --vkui--color_separator_secondary:          #231f1c;
+
+  --vkui--color_field_border_alpha:           rgba(255, 255, 255, 0.12);
+  --vkui--color_field_border_alpha--hover:    rgba(255, 255, 255, 0.18);
+  --vkui--color_field_border_alpha--active:   rgba(255, 255, 255, 0.24);
+
+  /* ───────────────────────────────────────────────
+     WRITE BAR
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_write_bar_input_background:   #1a1613;
+  --vkui--color_write_bar_input_border:       #2e2520;
+  --vkui--color_write_bar_input_border_alpha: rgba(255, 255, 255, 0.10);
+
+  /* ───────────────────────────────────────────────
+     TABBAR / SEGMENTED CONTROL
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_tabbar_text_inactive: #604e48;
+
+  --vkui--color_segmented_control: #201c19;
+
+  /* ───────────────────────────────────────────────
+     TRACK (прогресс-бары)
+  ─────────────────────────────────────────────── */
+
+  --vkui--color_track_background: #2e2520;
+  --vkui--color_track_buffer:     #6a2030;
+}

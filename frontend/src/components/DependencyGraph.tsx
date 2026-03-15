@@ -1,7 +1,9 @@
 'use client'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
+import { observer } from 'mobx-react-lite'
 import type { ChallengeInfo, Dependency, ChallengeStatus } from '../types'
 import { getNodeType } from '../types'
+import { langStore } from '../stores'
 
 const NODE_RADIUS = 26
 
@@ -19,12 +21,12 @@ const NODE_COLORS: Record<string, string> = {
 }
 
 const ICON_URLS: Record<string, string> = {
-  survivor: '/icons/survivor.webp',
-  killer:   '/icons/killer.webp',
-  shared:   '/icons/shared.webp',
-  prologue: '/icons/prologue.webp',
-  epilogue: '/icons/epilogue.webp',
-  reward:   '/icons/reward.webp',
+  survivor: '/challenge_icons/ChallengeIcon_survivor.png',
+  killer:   '/challenge_icons/ChallengeIcon_killer.png',
+  shared:   '/challenge_icons/ChallengeIcon_survivorKiller.png',
+  prologue: '/challenge_icons/IconHelp_archivesGeneral.png',
+  epilogue: '/challenge_icons/IconHelp_archivesGeneral.png',
+  reward:   '/challenge_icons/IconHelp_archivesLog.png',
 }
 
 const iconCache = new Map<string, HTMLImageElement>()
@@ -36,8 +38,17 @@ if (typeof window !== 'undefined') {
   }
 }
 
-const LABEL_MAX_WIDTH = 120
-const LABEL_LINE_HEIGHT = 13
+function getOrLoadImage(url: string, onLoad?: () => void): HTMLImageElement {
+  if (iconCache.has(url)) return iconCache.get(url)!
+  const img = new Image()
+  img.onload = onLoad ?? null
+  img.src = url
+  iconCache.set(url, img)
+  return img
+}
+
+const LABEL_MAX_WIDTH = 130
+const LABEL_LINE_HEIGHT = 15
 
 function getNodeColor(c: ChallengeInfo): string {
   const t = getNodeType(c.name)
@@ -104,17 +115,20 @@ interface Props {
   onChallengeClick?: (challenge: ChallengeInfo) => void
 }
 
-export default function DependencyGraph({
+export default observer(function DependencyGraph({
   challenges, dependencies, mode,
   onToggleLink, onMoveChallenge,
   getStatus, onChallengeClick,
 }: Props) {
+  const t = (key: string) => langStore.t(key)
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef    = useRef<HTMLCanvasElement>(null)
+  const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1
 
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 520 })
   const [positions,  setPositions]  = useState<Map<number, NodePos>>(new Map())
   const [hoveredId,  setHoveredId]  = useState<number | null>(null)
+  const [iconLoadTick, setIconLoadTick] = useState(0)
   const [transform,  setTransform]  = useState<Transform>({ x: 0, y: 0, scale: 1 })
   const [selectedForLink, setSelectedForLink] = useState<ChallengeInfo | null>(null)
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
@@ -185,10 +199,15 @@ export default function DependencyGraph({
 
     const { x: tx, y: ty, scale } = transform
 
-    ctx.clearRect(0, 0, width, height)
+    ctx.clearRect(0, 0, width * dpr, height * dpr)
     ctx.fillStyle = '#111827'
-    ctx.fillRect(0, 0, width, height)
+    ctx.fillRect(0, 0, width * dpr, height * dpr)
 
+    // Внешний save: только DPR-масштаб — легенда и хинт рисуются внутри него
+    ctx.save()
+    ctx.scale(dpr, dpr)
+
+    // Внутренний save: мировой трансформ для графа
     ctx.save()
     ctx.translate(tx, ty)
     ctx.scale(scale, scale)
@@ -224,7 +243,7 @@ export default function DependencyGraph({
     }
 
     // Узлы
-    ctx.font = `${12 / scale}px Inter, system-ui, sans-serif`
+    ctx.font = `${14 / scale}px Inter, system-ui, sans-serif`
 
     for (const challenge of challenges) {
       const pos = positions.get(challenge.id)
@@ -264,9 +283,13 @@ export default function DependencyGraph({
 
       ctx.shadowBlur = 0
 
-      // Иконка
-      const img      = iconCache.get(getIconKey(challenge))
-      const iconSize = r * 1.4
+      // Иконка: приоритет challenge icon_url, иначе иконка роли
+      const challengeImg = challenge.icon_url
+        ? getOrLoadImage(challenge.icon_url, () => setIconLoadTick(t => t + 1))
+        : undefined
+      const roleImg      = iconCache.get(getIconKey(challenge))
+      const img          = (challengeImg?.complete && challengeImg.naturalWidth > 0) ? challengeImg : roleImg
+      const iconSize     = r * 1.4
       if (img?.complete && img.naturalWidth > 0) {
         ctx.save()
         ctx.globalAlpha = isLocked ? 0.25 : 1
@@ -328,24 +351,24 @@ export default function DependencyGraph({
 
       // Индикатор выбранного для связи
       if (mode === 'admin' && isSelectedLink) {
-        ctx.font      = `bold ${10 / scale}px Inter, system-ui, sans-serif`
+        ctx.font      = `bold ${12 / scale}px Inter, system-ui, sans-serif`
         ctx.fillStyle = '#fbbf24'
         ctx.fillText('●●●', pos.x, pos.y - r - 8 / scale)
-        ctx.font = `${12 / scale}px Inter, system-ui, sans-serif`
+        ctx.font = `${14 / scale}px Inter, system-ui, sans-serif`
       }
     }
 
-    ctx.restore()
+    ctx.restore()  // снимаем мировой трансформ, DPR-масштаб остаётся
 
     // Легенда
     const legends = [
-      { color: NODE_COLORS.prologue, label: 'Пролог' },
-      { color: ROLE_COLORS.survivor, label: 'Выживший' },
-      { color: ROLE_COLORS.killer,   label: 'Убийца' },
-      { color: ROLE_COLORS.shared,   label: 'Любой' },
-      { color: NODE_COLORS.epilogue, label: 'Эпилог' },
+      { color: NODE_COLORS.prologue, label: t('challenge.prologue') },
+      { color: ROLE_COLORS.survivor, label: t('challenge.survivor') },
+      { color: ROLE_COLORS.killer,   label: t('challenge.killer') },
+      { color: ROLE_COLORS.shared,   label: t('challenge.shared') },
+      { color: NODE_COLORS.epilogue, label: t('challenge.epilogue') },
     ]
-    ctx.font          = '11px Inter, system-ui, sans-serif'
+    ctx.font          = '13px Inter, system-ui, sans-serif'
     ctx.textAlign     = 'left'
     ctx.textBaseline  = 'middle'
     legends.forEach((leg, i) => {
@@ -359,7 +382,7 @@ export default function DependencyGraph({
     })
 
     // Подсказка
-    ctx.font      = '10px Inter, system-ui, sans-serif'
+    ctx.font      = '12px Inter, system-ui, sans-serif'
     ctx.fillStyle = 'rgba(255,255,255,0.3)'
     ctx.textAlign = 'right'
     const hint = mode === 'admin'
@@ -368,7 +391,9 @@ export default function DependencyGraph({
           : 'Клик — выбрать · Зажать — переместить · Скролл — зум · Тащить фон — панорама')
       : 'Клик — отметить · Скролл — зум · Тащить фон — панорама'
     ctx.fillText(hint, width - 8, height - 8)
-  }, [positions, challenges, dependencies, hoveredId, transform, width, height, mode, selectedForLink, getStatus])
+
+    ctx.restore()  // снимаем DPR-масштаб
+  }, [positions, challenges, dependencies, hoveredId, transform, width, height, dpr, mode, selectedForLink, getStatus, iconLoadTick, langStore.lang])
 
   // ── Утилиты ──────────────────────────────────────────────────────────────────
   const toWorld = useCallback((mx: number, my: number) => {
@@ -527,8 +552,8 @@ export default function DependencyGraph({
     <div ref={containerRef} style={{ width: '100%', position: 'relative', userSelect: 'none' }}>
       <canvas
         ref={canvasRef}
-        width={width}
-        height={height}
+        width={width * dpr}
+        height={height * dpr}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -542,6 +567,7 @@ export default function DependencyGraph({
           borderRadius: 10,
           display: 'block',
           width: '100%',
+          height,
           cursor: draggingNode.current && dragMoved.current
             ? 'grabbing'
             : hoveredId !== null
@@ -571,9 +597,9 @@ export default function DependencyGraph({
           <div style={{ fontWeight: 600, fontSize: 13, color: '#fff', marginBottom: 4, lineHeight: 1.3 }}>
             {hoveredChallenge.name || hoveredChallenge.challenge_key}
           </div>
-          {hoveredChallenge.role && (
-            <div style={{ fontSize: 11, color: getNodeColor(hoveredChallenge), marginBottom: 6, textTransform: 'capitalize' }}>
-              {hoveredChallenge.role}
+          {hoveredChallenge.role && getNodeType(hoveredChallenge.name) === 'challenge' && (
+            <div style={{ fontSize: 11, color: getNodeColor(hoveredChallenge), marginBottom: 6 }}>
+              {t(`challenge.${hoveredChallenge.role}`) || hoveredChallenge.role}
             </div>
           )}
           {hoveredChallenge.objective && (
@@ -599,4 +625,4 @@ export default function DependencyGraph({
       )}
     </div>
   )
-}
+})

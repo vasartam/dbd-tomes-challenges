@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   PanelHeader,
   Group,
@@ -32,7 +32,9 @@ export default observer(function SearchPage() {
   const [statusFilter, setStatusFilter] = useState(() => searchParams?.get('status') ?? 'all')
   const [challenges, setChallenges] = useState<Challenge[]>([])
   const [loading, setLoading] = useState(false)
+  const [depsLoading, setDepsLoading] = useState(false)
   const [snackbar, setSnackbar] = useState<React.ReactNode>(null)
+  const depsLoadedForRef = useRef<string>('')
 
   const ROLE_OPTIONS = [
     { label: t('search.filters.allRoles'), value: '' },
@@ -88,10 +90,58 @@ export default observer(function SearchPage() {
     progressStore.load()
   }, [])
 
+  // Подгружаем deps страниц при фильтре "available"
+  useEffect(() => {
+    if (statusFilter !== 'available' || challenges.length === 0) return
+    const uniquePageIds = [...new Set(challenges.map(c => c.page_id))]
+    const cacheKey = uniquePageIds.sort().join(',')
+    if (depsLoadedForRef.current === cacheKey) return
+    setDepsLoading(true)
+    Promise.all(
+      uniquePageIds.map(pid => Promise.all([
+        catalogStore.loadPageDeps(pid),
+        catalogStore.loadPage(pid),
+      ]))
+    ).finally(() => {
+      depsLoadedForRef.current = cacheKey
+      setDepsLoading(false)
+    })
+  }, [challenges, statusFilter])
+
+  const isActuallyAvailable = (challenge: Challenge): boolean => {
+    if (progressStore.isCompleted(challenge.challenge_key)) return false
+    const key = `${challenge.page_id}_${lang}`
+    const deps = catalogStore.deps.get(key)
+
+    if (deps && deps.challenges.length > 0) {
+      const info = deps.challenges.find(c => c.challenge_key === challenge.challenge_key)
+      if (!info) return false
+      const linked = deps.dependencies.flatMap(d => {
+        if (d.a_id === info.id) return [d.b_id]
+        if (d.b_id === info.id) return [d.a_id]
+        return []
+      })
+      if (linked.length === 0) return true
+      return linked.some(nid => {
+        const neighbor = deps.challenges.find(c => c.id === nid)
+        return neighbor && progressStore.isCompleted(neighbor.challenge_key)
+      })
+    }
+
+    // Линейный режим
+    const page = catalogStore.pages.get(key)
+    const pageChalls = (page?.challenges ?? [])
+      .filter(c => getNodeType(c.name) === 'challenge')
+      .sort((a, b) => a.node_index - b.node_index)
+    const idx = pageChalls.findIndex(c => c.challenge_key === challenge.challenge_key)
+    if (idx <= 0) return true
+    return progressStore.isCompleted(pageChalls[idx - 1].challenge_key)
+  }
+
   const filtered = challenges.filter(c => {
     if (getNodeType(c.name) !== 'challenge') return false
     if (statusFilter === 'completed') return progressStore.isCompleted(c.challenge_key)
-    if (statusFilter === 'available') return !progressStore.isCompleted(c.challenge_key)
+    if (statusFilter === 'available') return isActuallyAvailable(c)
     return true
   })
 
@@ -141,7 +191,7 @@ export default observer(function SearchPage() {
       <Group>
         <Header>{headerText}</Header>
 
-        {loading ? (
+        {loading || depsLoading ? (
           <Div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}>
             <Spinner />
           </Div>

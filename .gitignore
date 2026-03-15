@@ -5,3 +5,5 @@ db.sqlite*
 __pycache__/
 *.pyc
 .idea
+frontend/public/challenge_icons
+scrape_state.json

@@ -42,7 +42,7 @@ export default observer(function AppShell({ children }: Props) {
     : 'tomes'
 
   return (
-    <SplitLayout style={{ paddingBottom: 60 }}>
+    <SplitLayout style={{ paddingBottom: 72 }}>
       <SplitCol>
         {children}
         <Tabbar style={{ position: 'fixed', bottom: 0, left: 0, right: 0 }}>

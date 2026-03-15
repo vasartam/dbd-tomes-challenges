@@ -76,6 +76,7 @@ export interface ChallengeInfo {
   // Позиция на графе (мировые координаты)
   pos_x: number | null
   pos_y: number | null
+  icon_url: string | null
 }
 
 export interface PageDependencies {

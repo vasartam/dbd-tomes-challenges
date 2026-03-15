@@ -4,13 +4,14 @@ import {
   PanelHeader,
   PanelHeaderBack,
   Group,
-  Button,
   Div,
   Spinner,
   Snackbar,
   Text,
   CustomSelect,
   FormItem,
+  Tabs,
+  TabsItem,
 } from '@vkontakte/vkui'
 import {
   Icon28CancelCircleOutline,
@@ -25,9 +26,10 @@ import type { Tome, Dependency, ChallengeInfo } from '../types'
 
 interface Props {
   initialArchiveKey?: string
+  initialPageLevel?: number
 }
 
-export default observer(function AdminDepsPage({ initialArchiveKey }: Props) {
+export default observer(function AdminDepsPage({ initialArchiveKey, initialPageLevel }: Props) {
   const t = (key: string, vars?: Record<string, string | number>) => langStore.t(key, vars)
   const lang = langStore.lang
   const router = useRouter()
@@ -59,11 +61,14 @@ export default observer(function AdminDepsPage({ initialArchiveKey }: Props) {
     api.getTomes().then(setTomes).catch(console.error)
   }, [])
 
-  // Обновляем URL при смене тома
+  // Обновляем URL при смене тома или страницы
   useEffect(() => {
-    const target = selectedTomeKey ? `/admin/deps/${selectedTomeKey}` : '/admin/deps'
+    const selectedLevel = pages.find(p => p.id === selectedPageId)?.level_number
+    let target = '/admin/deps'
+    if (selectedTomeKey) target += `/${selectedTomeKey}`
+    if (selectedTomeKey && selectedLevel != null) target += `/${selectedLevel}`
     window.history.replaceState(null, '', target)
-  }, [selectedTomeKey])
+  }, [selectedTomeKey, selectedPageId, pages])
 
   // Загрузка страниц при смене тома
   useEffect(() => {
@@ -74,10 +79,15 @@ export default observer(function AdminDepsPage({ initialArchiveKey }: Props) {
     api.getTome(selectedTomeKey)
       .then(tome => {
         setPages(tome.pages)
-        setSelectedPageId(tome.pages.length > 0 ? tome.pages[0].id : null)
-        if (tome.pages.length === 0) { setChallenges([]); setDependencies([]) }
+        if (tome.pages.length === 0) {
+          setSelectedPageId(null); setChallenges([]); setDependencies([])
+        } else {
+          const byLevel = initialPageLevel != null && tome.pages.find(p => p.level_number === initialPageLevel)
+          setSelectedPageId(byLevel ? byLevel.id : tome.pages[0].id)
+        }
       })
       .catch(console.error)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTomeKey])
 
   // Загрузка заданий и зависимостей при смене страницы
@@ -146,29 +156,10 @@ export default observer(function AdminDepsPage({ initialArchiveKey }: Props) {
     } catch (err) { showError((err as Error).message) }
   }
 
-  const handleAutoLayout = async () => {
-    if (!selectedPageId) return
-    try {
-      const res = await api.adminAutoLayoutPage(selectedPageId)
-      showSuccess(res.message)
-      const [, depsData] = await Promise.all([
-        api.getPage(selectedPageId),
-        api.getPageDependencies(selectedPageId, lang),
-      ])
-      setChallenges(depsData.challenges)
-      setDependencies(depsData.dependencies)
-    } catch (err) { showError((err as Error).message) }
-  }
-
   const tomeOptions = [
     { value: '', label: t('admin.deps.selectTome') },
     ...tomes.map(tome => ({ value: tome.archive_key, label: tome.name || tome.archive_key })),
   ]
-
-  const pageOptions = pages.map(p => ({
-    value: p.id.toString(),
-    label: `${t('tome.page')} ${p.level_number}`,
-  }))
 
   return (
     <>
@@ -178,8 +169,7 @@ export default observer(function AdminDepsPage({ initialArchiveKey }: Props) {
 
       <Group>
         <Div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <FormItem top={t('admin.deps.tome')}>
-            {/* CustomSelect позволяет задать высоту выпадающего списка */}
+          <FormItem top={t('admin.deps.tome')} noPadding>
             <CustomSelect
               value={selectedTomeKey}
               onChange={(e) => setSelectedTomeKey(e.target.value)}
@@ -188,23 +178,25 @@ export default observer(function AdminDepsPage({ initialArchiveKey }: Props) {
               dropdownOffsetDistance={4}
             />
           </FormItem>
+        </Div>
+      </Group>
 
-          {pages.length > 0 && (
-            <FormItem top={t('admin.deps.page')}>
-              <CustomSelect
-                value={selectedPageId?.toString() || ''}
-                onChange={(e) => setSelectedPageId(Number(e.target.value))}
-                options={pageOptions}
-              />
-            </FormItem>
-          )}
+      {pages.length > 1 && (
+        <Tabs>
+          {pages.map(p => (
+            <TabsItem
+              key={p.id}
+              selected={selectedPageId === p.id}
+              onClick={() => setSelectedPageId(p.id)}
+            >
+              {t('tome.page')} {p.level_number}
+            </TabsItem>
+          ))}
+        </Tabs>
+      )}
 
-          {selectedPageId && (
-            <Button size="l" stretched onClick={handleAutoLayout}>
-              {t('admin.deps.autoLayout')}
-            </Button>
-          )}
-
+      {selectedTomeKey && <Group>
+        <Div>
           {loadingEditor ? (
             <Div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}><Spinner /></Div>
           ) : challenges.length > 0 ? (
@@ -225,7 +217,7 @@ export default observer(function AdminDepsPage({ initialArchiveKey }: Props) {
             <Text style={{ color: 'var(--vkui--color_text_secondary)' }}>{t('admin.deps.noChallenges')}</Text>
           ) : null}
         </Div>
-      </Group>
+      </Group>}
 
       {snackbar}
     </>
