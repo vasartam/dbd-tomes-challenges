@@ -1,0 +1,33 @@
+# ── Этап 1: сборка ───────────────────────────────────────────────────────────
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Зависимости — отдельный слой для кеширования
+COPY frontend/package.json frontend/yarn.lock ./
+RUN yarn install --frozen-lockfile
+
+# Исходники
+COPY frontend/ .
+
+# Сборка (NODE_ENV=production активирует output: 'standalone' в next.config.mjs)
+ENV NODE_ENV=production
+RUN yarn build
+
+# ── Этап 2: минимальный production-образ ─────────────────────────────────────
+FROM node:22-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=3001
+
+# standalone содержит только нужные файлы — не весь node_modules
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+EXPOSE 3001
+
+# server.js генерируется Next.js автоматически в standalone-режиме
+CMD ["node", "server.js"]

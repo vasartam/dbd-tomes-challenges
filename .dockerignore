@@ -1,0 +1,12 @@
+.git
+.github
+*.md
+*.old
+db.sqlite
+deploy/
+frontend/.next
+frontend/node_modules
+__pycache__
+*.pyc
+venv/
+.env
