@@ -70,3 +70,5 @@ jobs:
             # Скачиваем свежие образы и перезапускаем
             GITHUB_REPOSITORY=${{ github.repository }} docker compose pull
             GITHUB_REPOSITORY=${{ github.repository }} docker compose up -d --remove-orphans
+            # Перезапускаем nginx чтобы он подхватил новые IP пересозданных контейнеров
+            docker compose restart nginx
