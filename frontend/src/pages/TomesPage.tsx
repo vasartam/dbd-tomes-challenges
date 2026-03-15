@@ -1,4 +1,7 @@
-import React, { useEffect, useState } from 'react'
+'use client'
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { observer } from 'mobx-react-lite'
 import {
   PanelHeader,
   PanelHeaderButton,
@@ -10,38 +13,28 @@ import {
   Header,
 } from '@vkontakte/vkui'
 import { Icon28DoorArrowLeftOutline } from '@vkontakte/icons'
-import { api } from '../api'
-import { useAuth } from '../contexts/AuthContext'
-import { useLanguage } from '../contexts/LanguageContext'
-import type { Tome } from '../types'
+import { authStore, catalogStore, langStore } from '../stores'
 
 function formatDate(ts: number | null | undefined): string | null {
   if (!ts) return null
   return new Date(ts * 1000).toLocaleDateString('ru-RU', { year: 'numeric', month: 'long' })
 }
 
-interface Props {
-  onTomeClick: (archiveKey: string) => void
-}
-
-export default function TomesPage({ onTomeClick }: Props) {
-  const { logout } = useAuth()
-  const { t } = useLanguage()
-  const [tomes, setTomes] = useState<Tome[]>([])
-  const [loading, setLoading] = useState(true)
+export default observer(function TomesPage() {
+  const router = useRouter()
+  const t = (key: string) => langStore.t(key)
 
   useEffect(() => {
-    api.getTomes()
-      .then(setTomes)
-      .catch(console.error)
-      .finally(() => setLoading(false))
+    catalogStore.loadTomes()
   }, [])
+
+  const loading = !catalogStore.tomesLoaded
 
   return (
     <>
       <PanelHeader
         after={
-          <PanelHeaderButton onClick={logout} label={t('nav.logout')}>
+          <PanelHeaderButton onClick={() => authStore.logout()} label={t('nav.logout')}>
             <Icon28DoorArrowLeftOutline />
           </PanelHeaderButton>
         }
@@ -53,7 +46,7 @@ export default function TomesPage({ onTomeClick }: Props) {
         <Div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}>
           <Spinner />
         </Div>
-      ) : tomes.length === 0 ? (
+      ) : catalogStore.tomes.length === 0 ? (
         <Div>
           <Text style={{ textAlign: 'center', color: 'var(--vkui--color_text_secondary)', padding: 16 }}>
             {t('tomes.empty')}
@@ -62,10 +55,10 @@ export default function TomesPage({ onTomeClick }: Props) {
       ) : (
         <Group>
           <Header>{t('tomes.allTomes')}</Header>
-          {tomes.map(tome => (
+          {catalogStore.tomes.map(tome => (
             <SimpleCell
               key={tome.archive_key}
-              onClick={() => onTomeClick(tome.archive_key)}
+              onClick={() => router.push(`/tomes/${tome.archive_key}`)}
               subtitle={formatDate(tome.start_ts) ?? t('tomes.permanent')}
               chevron="auto"
             >
@@ -76,4 +69,4 @@ export default function TomesPage({ onTomeClick }: Props) {
       )}
     </>
   )
-}
+})

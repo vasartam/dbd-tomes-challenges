@@ -1,3 +1,4 @@
+'use client'
 import React from 'react'
 import { Card, Text, Caption } from '@vkontakte/vkui'
 import {
@@ -8,9 +9,10 @@ import {
   Icon24FlagFinish,
   Icon24Gift,
 } from '@vkontakte/icons'
+import { observer } from 'mobx-react-lite'
 import type { Challenge, ChallengeStatus, ChallengeNodeType } from '../types'
 import { getNodeType } from '../types'
-import { useLanguage } from '../contexts/LanguageContext'
+import { langStore } from '../stores'
 
 const ROLE_COLORS: Record<string, string> = {
   survivor: '#4CAF50',
@@ -37,8 +39,8 @@ interface Props {
   compact?: boolean
 }
 
-export default function ChallengeCard({ challenge, status, subtitle, onClick, compact }: Props) {
-  const { t } = useLanguage()
+export default observer(function ChallengeCard({ challenge, status, subtitle, onClick, compact }: Props) {
+  const t = (key: string) => langStore.t(key)
   const isLocked = status === 'locked'
   const isDone = status === 'completed'
   const nodeType = getNodeType(challenge.name)
@@ -216,4 +218,4 @@ export default function ChallengeCard({ challenge, status, subtitle, onClick, co
       </div>
     </Card>
   )
-}
+})

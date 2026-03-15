@@ -1,3 +1,4 @@
+'use client'
 import React, { useState } from 'react'
 import {
   Panel,
@@ -12,30 +13,27 @@ import {
   Title,
   Text,
 } from '@vkontakte/vkui'
-import { useAuth } from '../contexts/AuthContext'
-import { useLanguage } from '../contexts/LanguageContext'
+import { observer } from 'mobx-react-lite'
+import { authStore, langStore } from '../stores'
 
 type Mode = 'login' | 'register'
 
-export default function AuthPage() {
-  const { login, register } = useAuth()
-  const { t } = useLanguage()
+export default observer(function AuthPage() {
   const [mode, setMode] = useState<Mode>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  const t = (key: string) => langStore.t(key)
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      if (mode === 'login') {
-        await login(username, password)
-      } else {
-        await register(username, password)
-      }
+      if (mode === 'login') await authStore.login(username, password)
+      else await authStore.register(username, password)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -109,4 +107,4 @@ export default function AuthPage() {
       </Group>
     </Panel>
   )
-}
+})

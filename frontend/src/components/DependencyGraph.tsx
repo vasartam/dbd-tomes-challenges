@@ -1,14 +1,13 @@
+'use client'
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import type { ChallengeInfo, Dependency } from '../types'
-import { getNodeType, NODE_TYPE_COLORS } from '../types'
+import { getNodeType } from '../types'
 
 interface Props {
   challenges: ChallengeInfo[]
   dependencies: Dependency[]
   selectedChallenge: ChallengeInfo | null
   onSelectChallenge: (challenge: ChallengeInfo | null) => void
-  width?: number
-  height?: number
 }
 
 interface NodePosition {
@@ -19,352 +18,430 @@ interface NodePosition {
   vy: number
 }
 
-// Цвета для ролей
+interface Transform {
+  x: number
+  y: number
+  scale: number
+}
+
+// Obsidian-like color palette
 const ROLE_COLORS: Record<string, string> = {
-  survivor: '#4CAF50',  // зелёный
-  killer: '#F44336',    // красный
-  shared: '#2196F3',    // синий
+  survivor: '#4ade80',  // green
+  killer:   '#f87171',  // red
+  shared:   '#60a5fa',  // blue
 }
 
-// Получить цвет узла по типу и роли
-function getNodeColor(challenge: ChallengeInfo): string {
-  const nodeType = getNodeType(challenge.name)
-
-  // Специальные узлы используют свои цвета
-  if (nodeType === 'prologue') return NODE_TYPE_COLORS.prologue
-  if (nodeType === 'epilogue') return NODE_TYPE_COLORS.epilogue
-  if (nodeType === 'reward') return NODE_TYPE_COLORS.reward
-
-  // Обычные задания — по роли
-  return ROLE_COLORS[challenge.role] || ROLE_COLORS.shared
+const NODE_COLORS: Record<string, string> = {
+  prologue: '#c084fc',  // purple
+  epilogue: '#fb923c',  // orange
+  reward:   '#fbbf24',  // amber
+  challenge: '#60a5fa', // blue
 }
 
-export default function DependencyGraph({
-  challenges,
-  dependencies,
-  selectedChallenge,
-  onSelectChallenge,
-  width = 600,
-  height = 400,
-}: Props) {
+const NODE_RADIUS = 26
+
+// DBD challenge icons (saved locally from Fandom wiki)
+const ICON_URLS: Record<string, string> = {
+  survivor: '/icons/survivor.webp',   // ChallengeIcon_survivor
+  killer:   '/icons/killer.webp',     // ChallengeIcon_killer
+  shared:   '/icons/shared.webp',     // ChallengeIcon_shared
+  prologue: '/icons/prologue.webp',   // ChallengeIcon_purpleGlyph
+  epilogue: '/icons/epilogue.webp',   // ChallengeIcon_orangeGlyph
+  reward:   '/icons/reward.webp',     // ChallengeIcon_yellowGlyph
+}
+
+// Preload images
+const iconCache = new Map<string, HTMLImageElement>()
+if (typeof window !== 'undefined') {
+  for (const [key, url] of Object.entries(ICON_URLS)) {
+    const img = new Image()
+    img.src = url
+    iconCache.set(key, img)
+  }
+}
+const LABEL_MAX_WIDTH = 120
+const LABEL_LINE_HEIGHT = 13
+const SIM_FRAMES = 150
+
+function getNodeColor(c: ChallengeInfo): string {
+  const t = getNodeType(c.name)
+  if (t !== 'challenge') return NODE_COLORS[t]
+  return ROLE_COLORS[c.role] ?? ROLE_COLORS.shared
+}
+
+function getIconKey(c: ChallengeInfo): string {
+  const t = getNodeType(c.name)
+  return t === 'challenge' ? (c.role || 'shared') : t
+}
+
+// Wrap text into lines that fit maxWidth
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const words = text.split(' ')
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    const test = current ? `${current} ${word}` : word
+    if (ctx.measureText(test).width <= maxWidth) {
+      current = test
+    } else {
+      if (current) lines.push(current)
+      current = word
+    }
+  }
+  if (current) lines.push(current)
+  return lines
+}
+
+export default function DependencyGraph({ challenges, dependencies, selectedChallenge, onSelectChallenge }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [canvasSize, setCanvasSize] = useState({ width: 800, height: 520 })
   const [positions, setPositions] = useState<Map<number, NodePosition>>(new Map())
   const [hoveredId, setHoveredId] = useState<number | null>(null)
+  const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 })
   const animationRef = useRef<number | null>(null)
+  const isDraggingCanvas = useRef(false)
+  const dragStart = useRef({ mx: 0, my: 0, tx: 0, ty: 0 })
 
-  // Инициализация позиций
+  // Observe container width
   useEffect(() => {
-    const newPositions = new Map<number, NodePosition>()
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0].contentRect.width
+      if (w > 0) setCanvasSize({ width: w, height: Math.max(480, Math.round(w * 0.6)) })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
-    // Группируем по типу
+  const { width, height } = canvasSize
+
+  // Initialize positions when challenges or canvas size changes
+  useEffect(() => {
+    const map = new Map<number, NodePosition>()
     const prologues = challenges.filter(c => getNodeType(c.name) === 'prologue')
     const epilogues = challenges.filter(c => getNodeType(c.name) === 'epilogue')
-    const others = challenges.filter(c => {
-      const t = getNodeType(c.name)
-      return t !== 'prologue' && t !== 'epilogue'
-    })
+    const others    = challenges.filter(c => { const t = getNodeType(c.name); return t !== 'prologue' && t !== 'epilogue' })
 
-    // Прологи сверху
     prologues.forEach((c, i) => {
-      const spacing = width / (prologues.length + 1)
-      newPositions.set(c.id, {
-        id: c.id,
-        x: spacing * (i + 1),
-        y: 50,
-        vx: 0,
-        vy: 0,
-      })
+      map.set(c.id, { id: c.id, x: width / (prologues.length + 1) * (i + 1), y: 60, vx: 0, vy: 0 })
     })
-
-    // Эпилоги снизу
     epilogues.forEach((c, i) => {
-      const spacing = width / (epilogues.length + 1)
-      newPositions.set(c.id, {
-        id: c.id,
-        x: spacing * (i + 1),
-        y: height - 50,
-        vx: 0,
-        vy: 0,
-      })
+      map.set(c.id, { id: c.id, x: width / (epilogues.length + 1) * (i + 1), y: height - 60, vx: 0, vy: 0 })
     })
-
-    // Остальные в центре
     others.forEach((c, i) => {
       const cols = Math.ceil(Math.sqrt(others.length))
-      const row = Math.floor(i / cols)
       const col = i % cols
-      const spacingX = width / (cols + 1)
-      const spacingY = (height - 150) / (Math.ceil(others.length / cols) + 1)
-
-      newPositions.set(c.id, {
-        id: c.id,
-        x: spacingX * (col + 1),
-        y: 100 + spacingY * (row + 1),
-        vx: 0,
-        vy: 0,
-      })
+      const row = Math.floor(i / cols)
+      const sx = width / (cols + 1)
+      const sy = (height - 160) / (Math.ceil(others.length / cols) + 1)
+      map.set(c.id, { id: c.id, x: sx * (col + 1), y: 110 + sy * (row + 1), vx: 0, vy: 0 })
     })
-
-    setPositions(newPositions)
+    setPositions(map)
+    setTransform({ x: 0, y: 0, scale: 1 })
   }, [challenges, width, height])
 
-  // Простая симуляция для улучшения позиций
+  // Force simulation
   const simulate = useCallback(() => {
     setPositions(prev => {
       const next = new Map(prev)
-      const nodeRadius = 20
 
-      // Силы: отталкивание между узлами
+      // Repulsion
       for (const [id1, n1] of next) {
         for (const [id2, n2] of next) {
           if (id1 >= id2) continue
-          const dx = n2.x - n1.x
-          const dy = n2.y - n1.y
+          const dx = n2.x - n1.x, dy = n2.y - n1.y
           const dist = Math.sqrt(dx * dx + dy * dy) || 1
-          const minDist = nodeRadius * 3
-
+          const minDist = NODE_RADIUS * 4.5
           if (dist < minDist) {
-            const force = (minDist - dist) / dist * 0.5
-            const fx = dx * force
-            const fy = dy * force
-            n1.vx -= fx
-            n1.vy -= fy
-            n2.vx += fx
-            n2.vy += fy
+            const f = (minDist - dist) / dist * 0.4
+            n1.vx -= dx * f; n1.vy -= dy * f
+            n2.vx += dx * f; n2.vy += dy * f
           }
         }
       }
 
-      // Притяжение по связям
+      // Attraction along edges
       for (const dep of dependencies) {
-        const parent = next.get(dep.parent_id)
-        const child = next.get(dep.child_id)
-        if (!parent || !child) continue
-
-        const dx = child.x - parent.x
-        const dy = child.y - parent.y
+        const p = next.get(dep.parent_id), c = next.get(dep.child_id)
+        if (!p || !c) continue
+        const dx = c.x - p.x, dy = c.y - p.y
         const dist = Math.sqrt(dx * dx + dy * dy) || 1
-        const targetDist = 80
-        const force = (dist - targetDist) / dist * 0.1
-
-        parent.vx += dx * force
-        parent.vy += dy * force
-        child.vx -= dx * force
-        child.vy -= dy * force
+        const target = 120
+        const f = (dist - target) / dist * 0.08
+        p.vx += dx * f; p.vy += dy * f
+        c.vx -= dx * f; c.vy -= dy * f
       }
 
-      // Применить скорости и границы
-      for (const [, node] of next) {
-        node.x += node.vx
-        node.y += node.vy
-        node.vx *= 0.9
-        node.vy *= 0.9
+      // Center gravity (weak)
+      for (const [, n] of next) {
+        n.vx += (width / 2 - n.x) * 0.002
+        n.vy += (height / 2 - n.y) * 0.002
+      }
 
-        // Границы
-        node.x = Math.max(nodeRadius, Math.min(width - nodeRadius, node.x))
-        node.y = Math.max(nodeRadius, Math.min(height - nodeRadius, node.y))
+      // Apply + dampen + clamp
+      for (const [, n] of next) {
+        n.x += n.vx; n.y += n.vy
+        n.vx *= 0.85; n.vy *= 0.85
+        n.x = Math.max(NODE_RADIUS + 10, Math.min(width - NODE_RADIUS - 10, n.x))
+        n.y = Math.max(NODE_RADIUS + 10, Math.min(height - NODE_RADIUS - 10, n.y))
       }
 
       return next
     })
   }, [dependencies, width, height])
 
-  // Запуск симуляции
   useEffect(() => {
     let frame = 0
-    const maxFrames = 100
-
-    const animate = () => {
-      if (frame < maxFrames) {
-        simulate()
-        frame++
-        animationRef.current = requestAnimationFrame(animate)
-      }
+    const run = () => {
+      if (frame < SIM_FRAMES) { simulate(); frame++; animationRef.current = requestAnimationFrame(run) }
     }
-
-    animate()
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current)
-      }
-    }
+    run()
+    return () => { if (animationRef.current) cancelAnimationFrame(animationRef.current) }
   }, [simulate])
 
-  // Рендеринг на canvas
+  // Render
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Очистка
-    ctx.clearRect(0, 0, width, height)
+    const { x: tx, y: ty, scale } = transform
 
-    // Фон
-    ctx.fillStyle = '#1a1a1a'
+    ctx.clearRect(0, 0, width, height)
+    ctx.fillStyle = '#111827'
     ctx.fillRect(0, 0, width, height)
 
-    // Рёбра
-    ctx.strokeStyle = '#444'
-    ctx.lineWidth = 1.5
+    ctx.save()
+    ctx.translate(tx, ty)
+    ctx.scale(scale, scale)
+
+    // Grid dots (Obsidian style)
+    const gridStep = 40
+    ctx.fillStyle = 'rgba(255,255,255,0.04)'
+    const startX = Math.floor(-tx / scale / gridStep) * gridStep
+    const startY = Math.floor(-ty / scale / gridStep) * gridStep
+    const endX = startX + width / scale + gridStep
+    const endY = startY + height / scale + gridStep
+    for (let gx = startX; gx < endX; gx += gridStep) {
+      for (let gy = startY; gy < endY; gy += gridStep) {
+        ctx.beginPath()
+        ctx.arc(gx, gy, 1, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+
+    // Edges
     for (const dep of dependencies) {
-      const parent = positions.get(dep.parent_id)
-      const child = positions.get(dep.child_id)
-      if (!parent || !child) continue
+      const p = positions.get(dep.parent_id), c = positions.get(dep.child_id)
+      if (!p || !c) continue
 
-      // Подсветка если связано с выбранным
       const isRelated = selectedChallenge?.id === dep.parent_id || selectedChallenge?.id === dep.child_id
-      ctx.strokeStyle = isRelated ? '#4CAF50' : '#444'
-      ctx.lineWidth = isRelated ? 2 : 1.5
+      const lineColor = isRelated ? 'rgba(250,204,21,0.9)' : 'rgba(255,255,255,0.15)'
+      const lineWidth = isRelated ? 2 : 1
 
+      ctx.strokeStyle = lineColor
+      ctx.lineWidth = lineWidth / scale
       ctx.beginPath()
-      ctx.moveTo(parent.x, parent.y)
-      ctx.lineTo(child.x, child.y)
+      ctx.moveTo(p.x, p.y)
+      ctx.lineTo(c.x, c.y)
       ctx.stroke()
 
-      // Стрелка
-      const angle = Math.atan2(child.y - parent.y, child.x - parent.x)
-      const arrowLen = 8
-      const arrowX = child.x - Math.cos(angle) * 25
-      const arrowY = child.y - Math.sin(angle) * 25
-
+      // Arrow
+      const angle = Math.atan2(c.y - p.y, c.x - p.x)
+      const ar = NODE_RADIUS + 4
+      const ax = c.x - Math.cos(angle) * ar
+      const ay = c.y - Math.sin(angle) * ar
+      const aLen = 7 / scale
+      ctx.fillStyle = lineColor
       ctx.beginPath()
-      ctx.moveTo(arrowX, arrowY)
-      ctx.lineTo(
-        arrowX - arrowLen * Math.cos(angle - Math.PI / 6),
-        arrowY - arrowLen * Math.sin(angle - Math.PI / 6)
-      )
-      ctx.lineTo(
-        arrowX - arrowLen * Math.cos(angle + Math.PI / 6),
-        arrowY - arrowLen * Math.sin(angle + Math.PI / 6)
-      )
+      ctx.moveTo(ax, ay)
+      ctx.lineTo(ax - aLen * Math.cos(angle - Math.PI / 6), ay - aLen * Math.sin(angle - Math.PI / 6))
+      ctx.lineTo(ax - aLen * Math.cos(angle + Math.PI / 6), ay - aLen * Math.sin(angle + Math.PI / 6))
       ctx.closePath()
-      ctx.fillStyle = isRelated ? '#4CAF50' : '#444'
       ctx.fill()
     }
 
-    // Узлы
+    // Nodes
+    ctx.font = `${12 / scale}px Inter, system-ui, sans-serif`
+
     for (const challenge of challenges) {
       const pos = positions.get(challenge.id)
       if (!pos) continue
 
-      const nodeType = getNodeType(challenge.name)
       const color = getNodeColor(challenge)
       const isSelected = selectedChallenge?.id === challenge.id
       const isHovered = hoveredId === challenge.id
-      const radius = isSelected ? 24 : isHovered ? 22 : 18
+      const r = isSelected ? NODE_RADIUS + 4 : isHovered ? NODE_RADIUS + 2 : NODE_RADIUS
 
-      // Круг
-      ctx.beginPath()
-      ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2)
-      ctx.fillStyle = isSelected ? '#4CAF50' : color
-      ctx.fill()
-
+      // Glow
       if (isSelected || isHovered) {
-        ctx.strokeStyle = '#fff'
-        ctx.lineWidth = 2
-        ctx.stroke()
+        ctx.shadowColor = isSelected ? 'rgba(250,204,21,0.9)' : color
+        ctx.shadowBlur = isSelected ? 24 : 14
       }
 
-      // Текст
-      ctx.fillStyle = '#fff'
-      ctx.font = '10px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
+      // Node circle background
+      ctx.beginPath()
+      ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2)
+      ctx.fillStyle = isSelected ? 'rgba(251,191,36,0.25)' : `${color}33`
+      ctx.fill()
 
-      const label = nodeType === 'prologue' ? '▶' :
-                   nodeType === 'epilogue' ? '🏁' :
-                   nodeType === 'reward' ? '🎁' :
-                   (challenge.name?.substring(0, 8) || '?')
-      ctx.fillText(label, pos.x, pos.y)
+      // Ring border
+      ctx.strokeStyle = isSelected ? '#fbbf24' : isHovered ? '#fff' : color
+      ctx.lineWidth = (isSelected ? 3 : 2) / scale
+      ctx.stroke()
+
+      ctx.shadowBlur = 0
+
+      // Icon image
+      const iconKey = getIconKey(challenge)
+      const img = iconCache.get(iconKey)
+      const iconSize = (r * 1.4)
+      if (img?.complete && img.naturalWidth > 0) {
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(pos.x, pos.y, r - 2 / scale, 0, Math.PI * 2)
+        ctx.clip()
+        ctx.drawImage(img, pos.x - iconSize / 2, pos.y - iconSize / 2, iconSize, iconSize)
+        ctx.restore()
+      }
+
+      // Label below node
+      const label = challenge.name || challenge.challenge_key
+      const lines = wrapText(ctx, label, LABEL_MAX_WIDTH / scale)
+      const lineH = LABEL_LINE_HEIGHT / scale
+      const labelY = pos.y + r + 6 / scale
+
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'top'
+
+      lines.slice(0, 3).forEach((line, i) => {
+        // Shadow for readability
+        ctx.fillStyle = 'rgba(0,0,0,0.7)'
+        ctx.fillText(line, pos.x + 0.5 / scale, labelY + i * lineH + 0.5 / scale)
+        // Text
+        ctx.fillStyle = isSelected ? '#fbbf24' : isHovered ? '#fff' : 'rgba(255,255,255,0.85)'
+        ctx.fillText(line, pos.x, labelY + i * lineH)
+      })
     }
 
-    // Легенда
-    ctx.font = '11px sans-serif'
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'top'
+    // Legend
+    ctx.restore()
 
     const legends = [
-      { color: NODE_TYPE_COLORS.prologue, label: 'Пролог' },
-      { color: ROLE_COLORS.survivor, label: 'Выживший' },
-      { color: ROLE_COLORS.killer, label: 'Убийца' },
-      { color: ROLE_COLORS.shared, label: 'Любой' },
-      { color: NODE_TYPE_COLORS.epilogue, label: 'Эпилог' },
+      { color: NODE_COLORS.prologue, label: 'Prologue' },
+      { color: ROLE_COLORS.survivor, label: 'Survivor' },
+      { color: ROLE_COLORS.killer, label: 'Killer' },
+      { color: ROLE_COLORS.shared, label: 'Any' },
+      { color: NODE_COLORS.epilogue, label: 'Epilogue' },
     ]
-
+    ctx.font = '11px Inter, system-ui, sans-serif'
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
     legends.forEach((leg, i) => {
-      ctx.fillStyle = leg.color
+      const lx = 14, ly = 16 + i * 20
       ctx.beginPath()
-      ctx.arc(15, 15 + i * 18, 6, 0, Math.PI * 2)
+      ctx.arc(lx, ly, 5, 0, Math.PI * 2)
+      ctx.fillStyle = leg.color
       ctx.fill()
-      ctx.fillStyle = '#888'
-      ctx.fillText(leg.label, 28, 10 + i * 18)
+      ctx.fillStyle = 'rgba(255,255,255,0.6)'
+      ctx.fillText(leg.label, lx + 10, ly)
     })
-  }, [positions, challenges, dependencies, selectedChallenge, hoveredId, width, height])
 
-  // Обработка клика
-  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    // Hint
+    ctx.font = '10px Inter, system-ui, sans-serif'
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'
+    ctx.textAlign = 'right'
+    ctx.fillText('Scroll to zoom · Drag to pan', width - 8, height - 8)
+  }, [positions, challenges, dependencies, selectedChallenge, hoveredId, transform, width, height])
 
-    const rect = canvas.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
+  // Screen → world coordinates
+  const toWorld = useCallback((mx: number, my: number) => {
+    const rect = canvasRef.current!.getBoundingClientRect()
+    const sx = (mx - rect.left)
+    const sy = (my - rect.top)
+    return {
+      x: (sx - transform.x) / transform.scale,
+      y: (sy - transform.y) / transform.scale,
+    }
+  }, [transform])
 
-    // Найти ближайший узел
+  const hitTest = useCallback((wx: number, wy: number): ChallengeInfo | null => {
     let closest: ChallengeInfo | null = null
-    let minDist = Infinity
-
-    for (const challenge of challenges) {
-      const pos = positions.get(challenge.id)
+    let minDist = NODE_RADIUS + 8
+    for (const c of challenges) {
+      const pos = positions.get(c.id)
       if (!pos) continue
-
-      const dist = Math.sqrt((pos.x - x) ** 2 + (pos.y - y) ** 2)
-      if (dist < 25 && dist < minDist) {
-        minDist = dist
-        closest = challenge
-      }
+      const d = Math.sqrt((pos.x - wx) ** 2 + (pos.y - wy) ** 2)
+      if (d < minDist) { minDist = d; closest = c }
     }
+    return closest
+  }, [challenges, positions])
 
-    onSelectChallenge(closest)
-  }
-
-  // Обработка движения мыши
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const rect = canvas.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-
-    let hovered: number | null = null
-
-    for (const challenge of challenges) {
-      const pos = positions.get(challenge.id)
-      if (!pos) continue
-
-      const dist = Math.sqrt((pos.x - x) ** 2 + (pos.y - y) ** 2)
-      if (dist < 20) {
-        hovered = challenge.id
-        break
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault()
+    const rect = canvasRef.current!.getBoundingClientRect()
+    const mx = e.clientX - rect.left
+    const my = e.clientY - rect.top
+    const delta = e.deltaY > 0 ? 0.9 : 1.1
+    setTransform(prev => {
+      const newScale = Math.max(0.2, Math.min(4, prev.scale * delta))
+      const ratio = newScale / prev.scale
+      return {
+        scale: newScale,
+        x: mx - (mx - prev.x) * ratio,
+        y: my - (my - prev.y) * ratio,
       }
-    }
+    })
+  }, [])
 
-    setHoveredId(hovered)
-  }
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const { x: wx, y: wy } = toWorld(e.clientX, e.clientY)
+    const hit = hitTest(wx, wy)
+    if (!hit) {
+      isDraggingCanvas.current = true
+      dragStart.current = { mx: e.clientX, my: e.clientY, tx: transform.x, ty: transform.y }
+    }
+  }, [toWorld, hitTest, transform])
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isDraggingCanvas.current) {
+      setTransform(prev => ({
+        ...prev,
+        x: dragStart.current.tx + (e.clientX - dragStart.current.mx),
+        y: dragStart.current.ty + (e.clientY - dragStart.current.my),
+      }))
+      return
+    }
+    const { x: wx, y: wy } = toWorld(e.clientX, e.clientY)
+    const hit = hitTest(wx, wy)
+    setHoveredId(hit?.id ?? null)
+  }, [toWorld, hitTest])
+
+  const handleMouseUp = useCallback((e: React.MouseEvent) => {
+    if (isDraggingCanvas.current) {
+      isDraggingCanvas.current = false
+      return
+    }
+    const { x: wx, y: wy } = toWorld(e.clientX, e.clientY)
+    onSelectChallenge(hitTest(wx, wy))
+  }, [toWorld, hitTest, onSelectChallenge])
 
   return (
-    <canvas
-      ref={canvasRef}
-      width={width}
-      height={height}
-      onClick={handleClick}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={() => setHoveredId(null)}
-      style={{ borderRadius: 8, cursor: 'pointer' }}
-    />
+    <div ref={containerRef} style={{ width: '100%' }}>
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={() => { setHoveredId(null); isDraggingCanvas.current = false }}
+        style={{ borderRadius: 10, cursor: hoveredId ? 'pointer' : isDraggingCanvas.current ? 'grabbing' : 'grab', display: 'block', width: '100%' }}
+      />
+    </div>
   )
 }

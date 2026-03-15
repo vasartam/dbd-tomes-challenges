@@ -1,3 +1,4 @@
+'use client'
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   PanelHeader,
@@ -11,15 +12,15 @@ import {
   Snackbar,
 } from '@vkontakte/vkui'
 import { Icon28CancelCircleOutline } from '@vkontakte/icons'
-import { api } from '../api'
-import { useProgress } from '../contexts/ProgressContext'
-import { useLanguage } from '../contexts/LanguageContext'
+import { observer } from 'mobx-react-lite'
+import { catalogStore, progressStore, langStore } from '../stores'
 import ChallengeCard from '../components/ChallengeCard'
 import type { Challenge } from '../types'
 
-export default function SearchPage() {
-  const { isCompleted, toggleProgress } = useProgress()
-  const { t } = useLanguage()
+export default observer(function SearchPage() {
+  const t = (key: string, vars?: Record<string, string | number>) => langStore.t(key, vars)
+  const lang = langStore.lang
+
   const [query, setQuery] = useState('')
   const [role, setRole] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -53,29 +54,33 @@ export default function SearchPage() {
 
   const doSearch = useCallback(() => {
     setLoading(true)
-    api.getChallenges({
+    catalogStore.searchChallenges({
       q: query || undefined,
       role: role || undefined,
     })
       .then(setChallenges)
       .catch(err => showError((err as Error).message))
       .finally(() => setLoading(false))
-  }, [query, role])
+  }, [query, role, lang])
 
   useEffect(() => {
     const timer = setTimeout(doSearch, 300)
     return () => clearTimeout(timer)
   }, [doSearch])
 
+  useEffect(() => {
+    progressStore.load()
+  }, [])
+
   const filtered = challenges.filter(c => {
-    if (statusFilter === 'completed') return isCompleted(c.challenge_key)
-    if (statusFilter === 'available') return !isCompleted(c.challenge_key)
+    if (statusFilter === 'completed') return progressStore.isCompleted(c.challenge_key)
+    if (statusFilter === 'available') return !progressStore.isCompleted(c.challenge_key)
     return true
   })
 
   const handleToggle = async (challenge: Challenge) => {
     try {
-      await toggleProgress(challenge.challenge_key, !isCompleted(challenge.challenge_key))
+      await progressStore.toggle(challenge.challenge_key, !progressStore.isCompleted(challenge.challenge_key))
     } catch (e) {
       showError((e as Error).message)
     }
@@ -123,7 +128,7 @@ export default function SearchPage() {
                 {idx > 0 && <div style={{ height: 8 }} />}
                 <ChallengeCard
                   challenge={challenge}
-                  status={isCompleted(challenge.challenge_key) ? 'completed' : 'available'}
+                  status={progressStore.isCompleted(challenge.challenge_key) ? 'completed' : 'available'}
                   subtitle={`${challenge.tome_name || challenge.archive_key} · ${t('search.page')} ${challenge.level_number}`}
                   onClick={() => handleToggle(challenge)}
                 />
@@ -143,4 +148,4 @@ export default function SearchPage() {
       {snackbar}
     </>
   )
-}
+})

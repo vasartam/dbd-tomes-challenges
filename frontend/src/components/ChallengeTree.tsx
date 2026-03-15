@@ -1,3 +1,4 @@
+'use client'
 import React from 'react'
 import type { Challenge, ChallengeStatus } from '../types'
 import ChallengeCard from './ChallengeCard'

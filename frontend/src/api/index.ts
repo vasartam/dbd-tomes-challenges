@@ -1,4 +1,5 @@
-import type { Language } from '../contexts/LanguageContext'
+'use client'
+import type { Language } from '../stores/LanguageStore'
 import type {
   Tome,
   TomeWithPages,
@@ -13,7 +14,7 @@ import type {
 const BASE = '/api'
 
 function getHeaders(): Record<string, string> {
-  const token = localStorage.getItem('access_token')
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
   return {
     'Content-Type': 'application/json',
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -21,8 +22,7 @@ function getHeaders(): Record<string, string> {
 }
 
 async function req<T>(method: string, path: string, body?: unknown, lang?: Language): Promise<T> {
-  // Добавляем язык в query params
-  const url = new URL(`${BASE}${path}`, window.location.origin)
+  const url = new URL(`${BASE}${path}`, typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
   if (lang) {
     url.searchParams.set('lang', lang)
   }
@@ -35,18 +35,6 @@ async function req<T>(method: string, path: string, body?: unknown, lang?: Langu
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
   return data as T
-}
-
-function getInitialLang(): Language {
-  const stored = localStorage.getItem('app_language')
-  if (stored === 'en' || stored === 'ru') return stored as Language
-  return navigator.language.toLowerCase().startsWith('ru') ? 'ru' : 'en'
-}
-
-let currentLang: Language = getInitialLang()
-
-export function setApiLanguage(lang: Language) {
-  currentLang = lang
 }
 
 export const api = {
@@ -63,20 +51,20 @@ export const api = {
 
   getTome: (archiveKey: string) => req<TomeWithPages>('GET', `/tomes/${archiveKey}`),
 
-  getPage: (pageId: number) => req<PageWithChallenges>('GET', `/pages/${pageId}`, undefined, currentLang),
+  getPage: (pageId: number, lang?: Language) =>
+    req<PageWithChallenges>('GET', `/pages/${pageId}`, undefined, lang),
 
-  getChallenges: (params: Record<string, string | undefined> = {}) => {
-    const url = new URL('/challenges', window.location.origin)
-    url.searchParams.set('lang', currentLang)
+  getChallenges: (params: Record<string, string | undefined> = {}, lang?: Language) => {
+    const searchParams = new URLSearchParams()
+    if (lang) searchParams.set('lang', lang)
     Object.entries(params).forEach(([key, value]) => {
-      if (value != null && value !== '') {
-        url.searchParams.set(key, value)
-      }
+      if (value != null && value !== '') searchParams.set(key, value)
     })
-    return req<Challenge[]>('GET', url.pathname + url.search)
+    const qs = searchParams.toString()
+    return req<Challenge[]>('GET', `/challenges${qs ? '?' + qs : ''}`)
   },
 
-  getProgress: () => req<ProgressRecord[]>('GET', '/user/progress', undefined, currentLang),
+  getProgress: () => req<ProgressRecord[]>('GET', '/user/progress'),
 
   setProgress: (challengeKey: string, completed: boolean) =>
     req<{ challenge_key: string; completed: boolean }>(
@@ -103,7 +91,7 @@ export const api = {
 
   // Dependencies
   getPageDependencies: (pageId: number, lang?: Language) =>
-    req<PageDependencies>('GET', `/pages/${pageId}/dependencies`, undefined, lang ?? currentLang),
+    req<PageDependencies>('GET', `/pages/${pageId}/dependencies`, undefined, lang),
 
   // Admin: Position & Dependencies
   adminSetChallengePosition: (challengeKey: string, gridColumn: number, gridRow: number) =>

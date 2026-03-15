@@ -1,3 +1,4 @@
+'use client'
 import React, { useMemo } from 'react'
 import type { Challenge, Dependency, ChallengeStatus, ChallengeInfo } from '../types'
 import ChallengeCard from './ChallengeCard'
