@@ -141,9 +141,9 @@ export default observer(function TomePage({ archiveKey, initialPageLevel, onBack
     })
   }
 
-  // Ищем задание в deps (ChallengeInfo) или в challenges страницы (Challenge)
+  // Ищем задание в deps (ChallengeInfo) — они содержат pos_x/pos_y
   const findChallenge = (id: number): ChallengeInfo | undefined =>
-    graphChallenges.find(c => c.id === id) ?? currentPage?.challenges.find(c => c.id === id)
+    graphChallenges.find(c => c.id === id)
 
   const getStatus = (challenge: ChallengeInfo): ChallengeStatus => {
     if (progressStore.isCompleted(challenge.challenge_key)) return 'completed'
