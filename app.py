@@ -1166,6 +1166,19 @@ def _run_scrape_icons() -> tuple[int, int]:
 
         return best_title if best_score >= 1 else None
 
+    # Скачиваем иконку пролога/эпилога если ещё нет
+    _prologue_icon_url = "https://static.wikia.nocookie.net/deadbydaylight_gamepedia_en/images/e/ec/IconHelp_archivesGeneral.png/revision/latest?cb=20191102073345"
+    _prologue_icon_dest = ICONS_DIR / "IconHelp_archivesGeneral.png"
+    if not _prologue_icon_dest.exists():
+        try:
+            _r = _wiki_session.get(_prologue_icon_url, timeout=15, stream=True)
+            _r.raise_for_status()
+            with open(_prologue_icon_dest, "wb") as _f:
+                for _chunk in _r.iter_content(8192):
+                    _f.write(_chunk)
+        except Exception:
+            pass
+
     # Считаем общее количество заданий для прогресса
     total_challenges = conn.execute("SELECT COUNT(*) FROM challenges").fetchone()[0]
     _scrape_state["total"]   = total_challenges
@@ -1200,6 +1213,14 @@ def _run_scrape_icons() -> tuple[int, int]:
             if not ch["name"]:
                 continue
             normalized = re.sub(r"\s+", " ", ch["name"].strip().lower())
+
+            # Пролог и эпилог не присутствуют в вики-таблицах — задаём иконку напрямую
+            if normalized in ("prologue", "epilogue"):
+                rel_path = "/challenge_icons/IconHelp_archivesGeneral.png"
+                conn.execute("UPDATE challenges SET icon_url = ? WHERE id = ?", (rel_path, ch["id"]))
+                total_matched += 1
+                continue
+
             icon_url = wiki_icons.get(normalized)
             if not icon_url:
                 for wname, wurl in wiki_icons.items():

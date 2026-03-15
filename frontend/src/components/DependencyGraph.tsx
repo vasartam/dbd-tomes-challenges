@@ -289,7 +289,7 @@ export default observer(function DependencyGraph({
         : undefined
       const roleImg      = iconCache.get(getIconKey(challenge))
       const img          = (challengeImg?.complete && challengeImg.naturalWidth > 0) ? challengeImg : roleImg
-      const iconSize     = r * 1.4
+      const iconSize     = r * 1.8
       if (img?.complete && img.naturalWidth > 0) {
         ctx.save()
         ctx.globalAlpha = isLocked ? 0.25 : 1
