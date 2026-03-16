@@ -158,7 +158,14 @@ export default observer(function AdminDepsPage({ initialArchiveKey, initialPageL
 
   const tomeOptions = [
     { value: '', label: t('admin.deps.selectTome') },
-    ...tomes.map(tome => ({ value: tome.archive_key, label: tome.name || tome.archive_key })),
+    ...[...tomes]
+      .sort((a, b) => {
+        const aIsTome = a.archive_key.toLowerCase().startsWith('tome')
+        const bIsTome = b.archive_key.toLowerCase().startsWith('tome')
+        if (aIsTome !== bIsTome) return aIsTome ? -1 : 1
+        return 0
+      })
+      .map(tome => ({ value: tome.archive_key, label: tome.name || tome.archive_key })),
   ]
 
   return (

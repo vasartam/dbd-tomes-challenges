@@ -68,6 +68,21 @@ class CatalogStore {
     return data
   }
 
+  async loadBulkDeps(pageIds: number[]): Promise<void> {
+    const lang = langStore.lang
+    const missing = pageIds.filter(id => !this.deps.has(`${id}_${lang}`))
+    if (missing.length === 0) return
+    const data = await apiReq<Record<string, PageDependencies>>(
+      'GET',
+      `/dependencies?page_ids=${missing.join(',')}&lang=${lang}`
+    )
+    runInAction(() => {
+      for (const [pageIdStr, deps] of Object.entries(data)) {
+        this.deps.set(`${pageIdStr}_${lang}`, deps)
+      }
+    })
+  }
+
   async loadPageCompletion(pageId: number): Promise<PageCompletionStatus> {
     if (this.pageCompletion.has(pageId)) return this.pageCompletion.get(pageId)!
     const data = await apiReq<PageCompletionStatus>('GET', `/user/pages/${pageId}/completion`)

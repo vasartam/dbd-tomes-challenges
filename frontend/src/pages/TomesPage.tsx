@@ -78,15 +78,17 @@ export default observer(function TomesPage() {
 
   const loading = !catalogStore.tomesLoaded
 
-  // Тома, начинающиеся с «tome» — первые, остальные — после
-  const sorted = useMemo(() => {
-    const tomes = [...catalogStore.tomes]
-    return tomes.sort((a, b) => {
-      const aIsTome = (a.name || a.archive_key).toLowerCase().startsWith('tome')
-      const bIsTome = (b.name || b.archive_key).toLowerCase().startsWith('tome')
-      if (aIsTome !== bIsTome) return aIsTome ? -1 : 1
-      return 0
-    })
+  const { mainTomes, otherTomes } = useMemo(() => {
+    const main: Tome[] = []
+    const other: Tome[] = []
+    for (const tome of catalogStore.tomes) {
+      if (tome.archive_key.toLowerCase().startsWith('tome')) {
+        main.push(tome)
+      } else {
+        other.push(tome)
+      }
+    }
+    return { mainTomes: main, otherTomes: other }
   }, [catalogStore.tomes])
 
   return (
@@ -109,32 +111,57 @@ export default observer(function TomesPage() {
         <Div style={{ display: 'flex', justifyContent: 'center', padding: 32 }}>
           <Spinner />
         </Div>
-      ) : sorted.length === 0 ? (
+      ) : mainTomes.length === 0 && otherTomes.length === 0 ? (
         <Div>
           <Text style={{ textAlign: 'center', color: 'var(--vkui--color_text_secondary)', padding: 16 }}>
             {t('tomes.empty')}
           </Text>
         </Div>
       ) : (
-        <Group>
-          <Header>{t('tomes.allTomes')}</Header>
-          <Div>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-              gridAutoRows: '100px',
-              gap: 10,
-            }}>
-              {sorted.map(tome => (
-                <TomeCard
-                  key={tome.archive_key}
-                  tome={tome}
-                  onClick={() => router.push(`/tomes/${tome.archive_key}`)}
-                />
-              ))}
-            </div>
-          </Div>
-        </Group>
+        <>
+          {mainTomes.length > 0 && (
+            <Group>
+              <Header>{t('tomes.allTomes')}</Header>
+              <Div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                  gridAutoRows: '100px',
+                  gap: 10,
+                }}>
+                  {mainTomes.map(tome => (
+                    <TomeCard
+                      key={tome.archive_key}
+                      tome={tome}
+                      onClick={() => router.push(`/tomes/${tome.archive_key}`)}
+                    />
+                  ))}
+                </div>
+              </Div>
+            </Group>
+          )}
+          {otherTomes.length > 0 && (
+            <Group>
+              <Header>{t('tomes.otherTomes')}</Header>
+              <Div>
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                  gridAutoRows: '100px',
+                  gap: 10,
+                }}>
+                  {otherTomes.map(tome => (
+                    <TomeCard
+                      key={tome.archive_key}
+                      tome={tome}
+                      onClick={() => router.push(`/tomes/${tome.archive_key}`)}
+                    />
+                  ))}
+                </div>
+              </Div>
+            </Group>
+          )}
+        </>
       )}
     </>
   )

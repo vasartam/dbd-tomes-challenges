@@ -894,6 +894,78 @@ def get_page_dependencies(page_id: int):
     })
 
 
+@app.get("/api/dependencies")
+def get_bulk_dependencies():
+    """
+    Зависимости нескольких страниц за один запрос.
+    Query params:
+      page_ids — список id страниц через запятую (например: 1,2,3)
+      lang     — язык (en/ru)
+    Ответ 200: { "<page_id>": { "challenges": [...], "dependencies": [...] }, ... }
+    """
+    lang = get_request_lang()
+    db = get_db()
+
+    page_ids_str = request.args.get("page_ids", "")
+    try:
+        page_ids = [int(pid) for pid in page_ids_str.split(",") if pid.strip()]
+    except ValueError:
+        return jsonify({"error": "Invalid page_ids"}), 400
+
+    if not page_ids:
+        return jsonify({})
+
+    placeholders = ",".join("?" * len(page_ids))
+
+    # Загружаем все задания указанных страниц одним запросом
+    rows = db.execute(f"""
+        SELECT id, challenge_key, name, name_ru, role, objective, objective_ru,
+               pos_x, pos_y, icon_url, page_id
+        FROM challenges
+        WHERE page_id IN ({placeholders})
+        ORDER BY page_id, node_index
+    """, page_ids).fetchall()
+
+    # Группируем задания по странице
+    challenges_by_page: dict = {pid: [] for pid in page_ids}
+    challenge_to_page: dict = {}
+    all_ids: list = []
+    for c in rows:
+        challenges_by_page[c["page_id"]].append(c)
+        challenge_to_page[c["id"]] = c["page_id"]
+        all_ids.append(c["id"])
+
+    # Загружаем все зависимости одним запросом
+    deps_by_page: dict = {pid: [] for pid in page_ids}
+    if all_ids:
+        dep_placeholders = ",".join("?" * len(all_ids))
+        raw_deps = db.execute(f"""
+            SELECT child_id, parent_id
+            FROM challenge_dependencies
+            WHERE child_id IN ({dep_placeholders}) OR parent_id IN ({dep_placeholders})
+        """, all_ids + all_ids).fetchall()
+
+        seen: set = set()
+        for d in raw_deps:
+            a_id = min(d["child_id"], d["parent_id"])
+            b_id = max(d["child_id"], d["parent_id"])
+            key = (a_id, b_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            page_id = challenge_to_page.get(a_id) or challenge_to_page.get(b_id)
+            if page_id in deps_by_page:
+                deps_by_page[page_id].append({"a_id": a_id, "b_id": b_id})
+
+    return jsonify({
+        str(pid): {
+            "challenges": [localize_challenge(row_to_dict(c), lang) for c in challenges_by_page[pid]],
+            "dependencies": deps_by_page[pid],
+        }
+        for pid in page_ids
+    })
+
+
 @app.put("/api/admin/challenges/<challenge_key>/position")
 @admin_required
 def set_challenge_position(challenge_key: str):

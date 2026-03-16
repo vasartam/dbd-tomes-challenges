@@ -42,10 +42,10 @@ export default observer(function AppShell({ children }: Props) {
     : 'tomes'
 
   return (
-    <SplitLayout style={{ paddingBottom: 72 }}>
-      <SplitCol>
+    <SplitLayout center style={{ paddingBottom: 72 }}>
+      <SplitCol maxWidth={1350} stretchedOnMobile>
         {children}
-        <Tabbar style={{ position: 'fixed', bottom: 0, left: 0, right: 0 }}>
+        <Tabbar style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 1350 }}>
           <TabbarItem
             onClick={() => router.push('/tomes')}
             selected={activeStory === 'tomes'}

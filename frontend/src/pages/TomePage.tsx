@@ -179,6 +179,23 @@ export default observer(function TomePage({ archiveKey, initialPageLevel, onBack
     const nodeType = getNodeType(challenge.name)
 
     if (nodeType === 'prologue' || nodeType === 'epilogue') {
+      // При снятии отметки с пролога запрещаем, если есть выполненные соседние задания
+      if (done && nodeType === 'prologue' && useGraph && currentDeps) {
+        const linked = getLinked(challenge.id)
+        const completedNeighbors = linked.filter(nid => {
+          const neighbor = findChallenge(nid)
+          return neighbor && progressStore.isCompleted(neighbor.challenge_key)
+        })
+        if (completedNeighbors.length > 0) {
+          const names = completedNeighbors
+            .map(nid => findChallenge(nid))
+            .filter(Boolean)
+            .map(c => `«${c!.name || c!.challenge_key}»`)
+            .join(', ')
+          showError(t('challenge.unmarkFirst', { names }))
+          return
+        }
+      }
       try {
         await progressStore.toggle(challenge.challenge_key, !done)
         if (currentPage) {
@@ -235,6 +252,8 @@ export default observer(function TomePage({ archiveKey, initialPageLevel, onBack
         const wouldBlock = linked.filter(neighborId => {
           const neighbor = findChallenge(neighborId)
           if (!neighbor || !progressStore.isCompleted(neighbor.challenge_key)) return false
+          // Пролог не зависит от соседей — его нельзя «заблокировать» снятием отметки с обычного задания
+          if (getNodeType(neighbor.name) === 'prologue') return false
           const neighborLinked = getLinked(neighborId)
           const otherCompleted = neighborLinked.filter(otherId => {
             if (otherId === challenge.id) return false

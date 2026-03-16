@@ -17,7 +17,7 @@ import { useSearchParams } from 'next/navigation'
 import { catalogStore, progressStore, langStore } from '../stores'
 import { getNodeType } from '../types'
 import ChallengeCard from '../components/ChallengeCard'
-import type { Challenge } from '../types'
+import type { Challenge, ChallengeStatus } from '../types'
 
 const MAX_VISIBLE = 50
 
@@ -90,23 +90,32 @@ export default observer(function SearchPage() {
     progressStore.load()
   }, [])
 
-  // Подгружаем deps страниц при фильтре "available"
+  // Подгружаем зависимости страниц одним bulk-запросом
   useEffect(() => {
-    if (statusFilter !== 'available' || challenges.length === 0) return
+    if (challenges.length === 0) return
     const uniquePageIds = [...new Set(challenges.map(c => c.page_id))]
     const cacheKey = uniquePageIds.sort().join(',')
     if (depsLoadedForRef.current === cacheKey) return
     setDepsLoading(true)
-    Promise.all(
-      uniquePageIds.map(pid => Promise.all([
-        catalogStore.loadPageDeps(pid),
-        catalogStore.loadPage(pid),
-      ]))
-    ).finally(() => {
-      depsLoadedForRef.current = cacheKey
-      setDepsLoading(false)
-    })
-  }, [challenges, statusFilter])
+    catalogStore.loadBulkDeps(uniquePageIds)
+      .catch(console.error)
+      .finally(() => {
+        depsLoadedForRef.current = cacheKey
+        setDepsLoading(false)
+      })
+  }, [challenges])
+
+  // Проверяет, есть ли у задания хотя бы одна связь (зависимость) в графе.
+  // Задания без связей (включая страницы в линейном режиме) скрываются из поиска.
+  const hasLinks = (challenge: Challenge): boolean => {
+    const key = `${challenge.page_id}_${lang}`
+    const deps = catalogStore.deps.get(key)
+    if (!deps) return true // зависимости ещё не загружены — показываем до загрузки (спиннер скрывает этот период)
+    if (deps.dependencies.length === 0) return false // нет связей ни у кого на странице — скрываем
+    const info = deps.challenges.find(c => c.challenge_key === challenge.challenge_key)
+    if (!info) return false
+    return deps.dependencies.some(d => d.a_id === info.id || d.b_id === info.id)
+  }
 
   const isActuallyAvailable = (challenge: Challenge): boolean => {
     if (progressStore.isCompleted(challenge.challenge_key)) return false
@@ -121,7 +130,6 @@ export default observer(function SearchPage() {
         if (d.b_id === info.id) return [d.a_id]
         return []
       })
-      if (linked.length === 0) return true
       return linked.some(nid => {
         const neighbor = deps.challenges.find(c => c.id === nid)
         return neighbor && progressStore.isCompleted(neighbor.challenge_key)
@@ -138,8 +146,15 @@ export default observer(function SearchPage() {
     return progressStore.isCompleted(pageChalls[idx - 1].challenge_key)
   }
 
+  const getChallengeStatus = (challenge: Challenge): ChallengeStatus => {
+    if (progressStore.isCompleted(challenge.challenge_key)) return 'completed'
+    if (isActuallyAvailable(challenge)) return 'available'
+    return 'locked'
+  }
+
   const filtered = challenges.filter(c => {
     if (getNodeType(c.name) !== 'challenge') return false
+    if (!hasLinks(c)) return false // скрываем задания без связей
     if (statusFilter === 'completed') return progressStore.isCompleted(c.challenge_key)
     if (statusFilter === 'available') return isActuallyAvailable(c)
     return true
@@ -197,17 +212,20 @@ export default observer(function SearchPage() {
           </Div>
         ) : (
           <Div style={{ paddingBottom: 72, display: 'flex', flexDirection: 'column', gap: 0 }}>
-            {visible.map((challenge, idx) => (
-              <React.Fragment key={challenge.challenge_key}>
-                {idx > 0 && <div style={{ height: 8 }} />}
-                <ChallengeCard
-                  challenge={challenge}
-                  status={progressStore.isCompleted(challenge.challenge_key) ? 'completed' : 'available'}
-                  subtitle={`${challenge.tome_name || challenge.archive_key} · ${t('search.page')} ${challenge.level_number}`}
-                  onClick={() => handleToggle(challenge)}
-                />
-              </React.Fragment>
-            ))}
+            {visible.map((challenge, idx) => {
+              const status = getChallengeStatus(challenge)
+              return (
+                <React.Fragment key={challenge.challenge_key}>
+                  {idx > 0 && <div style={{ height: 8 }} />}
+                  <ChallengeCard
+                    challenge={challenge}
+                    status={status}
+                    subtitle={`${challenge.tome_name || challenge.archive_key} · ${t('search.page')} ${challenge.level_number}`}
+                    onClick={status !== 'locked' ? () => handleToggle(challenge) : () => {}}
+                  />
+                </React.Fragment>
+              )
+            })}
             {visible.length === 0 && (
               <Div>
                 <Text style={{ textAlign: 'center', color: 'var(--vkui--color_text_secondary)' }}>

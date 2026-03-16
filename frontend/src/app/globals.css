@@ -8,8 +8,8 @@ body {
 }
 
 /* Увеличить высоту выпадающего списка CustomSelect */
-.vkuiCustomSelectDropdown__in {
-  max-height: 360px;
+.vkuiCustomSelectDropdown__inWithMaxHeight {
+  max-block-size: 480px;
 }
 
 /* Снекбар выше таббара */

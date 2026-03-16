@@ -14,7 +14,7 @@ const nextConfig = {
 
   // Polling для корректной работы hot reload в WSL при файлах на Windows-диске
   watchOptions: {
-    pollIntervalMs: 300,
+    pollIntervalMs: 500,
   },
 }
 export default nextConfig
