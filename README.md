@@ -15,8 +15,6 @@
   - [Переменные окружения](#переменные-окружения)
   - [Первый запуск: назначение администратора](#первый-запуск-назначение-администратора)
   - [Наполнение каталога](#наполнение-каталога)
-- [Редактор графа зависимостей](#редактор-графа-зависимостей)
-- [Деплой через GitHub Actions](#деплой-через-github-actions)
 - [База данных](#база-данных)
 - [API](#api)
 
@@ -42,25 +40,15 @@
 - 🔵 **Доступно** — предыдущее задание в цепочке выполнено
 - 🔒 **Заблокировано** — нужно сначала выполнить соседнее задание
 
-**Пролог** каждой страницы считается выполненным автоматически, как только страница становится доступна — не нужно нажимать на него вручную. **Эпилог** тоже считается выполненным автоматически, когда последнее задание перед ним отмечено. Это означает, что задания первой страницы любого тома сразу отображаются как доступные в глобальном поиске.
-
-### Визуальный граф зависимостей
-
-Каждая страница тома отображается в виде интерактивного графа на canvas: задания расположены в своих визуальных позициях, рёбра показывают зависимости между ними. Граф поддерживает перетаскивание и масштабирование, иконки заданий загружаются автоматически.
-
 ### Поддержка двух языков
 
-Интерфейс и содержимое заданий доступны на **английском** и **русском** языках. Язык переключается в шапке приложения.
-
-### Отображение статуса страниц и томов
-
-На вкладках страниц отображается галочка завершения. Страница считается выполненной, когда пройден полный путь от пролога до эпилога.
+Интерфейс и содержимое заданий доступны на **английском** и **русском** языках. Язык переключается по кнопке внизу справа.
 
 ### Открытое API
 
 Первое публичное API, которое возвращает не только базовые данные о заданиях (название, описание, роль, награды), но и:
 - **граф зависимостей** — какие задания связаны между собой
-- **визуальные позиции** узлов относительно друг друга на canvas
+- **визуальные позиции** узлов относительно друг друга
 
 Это позволяет строить собственные клиенты, визуализации и инструменты поверх данных о томах DBD. Авторизация для чтения каталога не требуется.
 
@@ -70,7 +58,7 @@
 
 ### Разработка (без Docker)
 
-**Требования:** Python 3.10+, Node.js 18+, Yarn
+**Требования:** Python 3.10+, Node.js 20+, Yarn
 
 ```bash
 git clone https://github.com/vasartam/dbd-tomes-challenges
@@ -106,12 +94,12 @@ Nginx проксирует запросы на фронтенд (порт 3001) 
 
 Файл `.env` (создаётся из `.env.example`):
 
-| Переменная       | Описание                                        |
-|------------------|-------------------------------------------------|
-| `APP_ENV`        | `development` или `production`                  |
-| `JWT_SECRET_KEY` | Секрет для подписи JWT-токенов (длинная строка) |
-| `DB_PATH`        | Путь к файлу SQLite (например, `./db.sqlite`)   |
-| `PORT`           | Порт бэкенда (по умолчанию `5001`)              |
+| Переменная       | Описание                                                                               |
+|------------------|----------------------------------------------------------------------------------------|
+| `APP_ENV`        | `development` или `production`                                                         |
+| `JWT_SECRET_KEY` | Секрет для подписи JWT-токенов. Сгенерировать: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `DB_PATH`        | Путь к файлу SQLite (например, `./db.sqlite`)                                          |
+| `PORT`           | Порт бэкенда (по умолчанию `5001`)                                                     |
 
 ### Первый запуск: назначение администратора
 
@@ -135,39 +123,7 @@ docker compose exec backend python app.py --make-admin <username>
 
 2. **Скачивание иконок** — нажмите кнопку «Скачать иконки». Приложение найдёт иконки заданий на вики DBD и сохранит их локально. Процесс идёт в фоне, прогресс отображается в интерфейсе.
 
-После этого каталог полностью готов к использованию.
-
----
-
-## Редактор графа зависимостей
-
-Для разработчиков и контрибьюторов: в разделе **Админ** доступна ссылка на редактор графа зависимостей для каждой страницы тома.
-
-В редакторе можно:
-- Перетаскивать узлы заданий, задавая их визуальные позиции на canvas
-- Устанавливать зависимости между заданиями (клик на узел → выбор соседей)
-- Применять **авто-расстановку** для линейного расположения узлов
-
-Зависимости хранятся как ненаправленный граф — связь между заданиями работает в обе стороны.
-
----
-
-## Деплой через GitHub Actions
-
-Репозиторий содержит готовый workflow (`.github/workflows/deploy.yml`):
-
-1. При пуше в `master` собираются Docker-образы бэкенда и фронтенда и публикуются в GitHub Container Registry (GHCR)
-2. На сервер отправляется SSH-команда: `docker compose pull && docker compose up -d`
-
-Необходимые секреты в настройках репозитория:
-
-| Секрет           | Описание                          |
-|------------------|-----------------------------------|
-| `DEPLOY_HOST`    | IP или домен сервера              |
-| `DEPLOY_USER`    | SSH-пользователь                  |
-| `DEPLOY_SSH_KEY` | Приватный SSH-ключ                |
-
-На сервере должны быть установлены Docker и Docker Compose, а также переменные `GHCR_TOKEN` и `GHCR_USER` для авторизации в GHCR.
+3. **Редактор графа зависимостей** — для каждой страницы тома доступна ссылка на редактор. В нём можно перетаскивать узлы заданий, задавая их визуальные позиции, и устанавливать зависимости между заданиями (клик на узел → выбор соседей). Зависимости хранятся как ненаправленный граф — связь работает в обе стороны.
 
 ---
 
@@ -247,22 +203,34 @@ Authorization: Bearer <access_token>
 ### Авторизация
 
 #### `POST /api/auth/register`
+
+Запрос:
 ```json
 { "username": "my_user", "password": "secret123" }
 ```
-Ответ `201`: `{ "message": "Registered successfully" }`
+Ответ `201`:
+```json
+{ "message": "Registered successfully" }
+```
 
 #### `POST /api/auth/login`
+
+Запрос:
 ```json
 { "username": "my_user", "password": "secret123" }
 ```
-Ответ `200`: `{ "access_token": "eyJ...", "username": "my_user" }`
+Ответ `200`:
+```json
+{ "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", "username": "my_user" }
+```
 
 Токен действителен **7 дней**.
 
 ### Профиль
 
 #### `GET /api/user/profile` 🔒
+
+Ответ `200`:
 ```json
 { "id": 1, "username": "my_user", "is_admin": false, "created_at": "2025-01-01 12:00:00" }
 ```
@@ -270,15 +238,65 @@ Authorization: Bearer <access_token>
 ### Каталог
 
 #### `GET /api/tomes`
-Список всех томов.
+
+Ответ `200`:
+```json
+[
+  { "id": 1, "archive_key": "Tome01", "name": "Tome I - Awakening", "start_ts": 1573171200, "end_ts": null },
+  { "id": 2, "archive_key": "Tome02", "name": "Tome II - Reckoning", "start_ts": 1578441600, "end_ts": null }
+]
+```
 
 #### `GET /api/tomes/<archive_key>`
+
 Том со списком страниц. Пример: `GET /api/tomes/Tome01`
 
+Ответ `200`:
+```json
+{
+  "id": 1,
+  "archive_key": "Tome01",
+  "name": "Tome I - Awakening",
+  "start_ts": 1573171200,
+  "end_ts": null,
+  "pages": [
+    { "id": 1, "level_number": 1 },
+    { "id": 2, "level_number": 2 }
+  ]
+}
+```
+
 #### `GET /api/pages/<page_id>`
+
 Страница со списком заданий. Пример: `GET /api/pages/1`
 
+Ответ `200`:
+```json
+{
+  "id": 1,
+  "tome_id": 1,
+  "level_number": 1,
+  "challenges": [
+    {
+      "id": 1,
+      "challenge_key": "Tome01_L1_N0",
+      "node_index": 0,
+      "name": "Prologue",
+      "name_ru": "Пролог",
+      "role": "shared",
+      "objective": "...",
+      "objective_ru": "...",
+      "rewards": [{"type": "bloodpoints", "id": "bloodpoints", "amount": 0}],
+      "pos_x": 100.0,
+      "pos_y": 300.0,
+      "icon_url": null
+    }
+  ]
+}
+```
+
 #### `GET /api/challenges`
+
 Список заданий с фильтрацией.
 
 | Параметр  | Описание                                    |
@@ -291,70 +309,208 @@ Authorization: Bearer <access_token>
 
 Пример: `GET /api/challenges?q=totem&role=killer&lang=ru`
 
+Ответ `200`:
+```json
+[
+  {
+    "id": 5,
+    "challenge_key": "Tome01_L1_N4",
+    "node_index": 4,
+    "name": "Hex: Ruin",
+    "name_ru": "Проклятие: Разруха",
+    "role": "killer",
+    "objective": "Cleanse or bless 4 totems in a single match.",
+    "objective_ru": "Очистите или освятите 4 тотема за одну игру.",
+    "rewards": [{"type": "bloodpoints", "id": "bloodpoints", "amount": 5000}],
+    "icon_url": "/icons/Tome01_L1_N4.png"
+  }
+]
+```
+
 #### `GET /api/challenges/<challenge_key>`
+
 Одно задание. Пример: `GET /api/challenges/Tome01_L1_N0`
+
+Ответ `200`:
+```json
+{
+  "id": 1,
+  "challenge_key": "Tome01_L1_N0",
+  "node_index": 0,
+  "name": "Prologue",
+  "name_ru": "Пролог",
+  "role": "shared",
+  "objective": "...",
+  "objective_ru": "...",
+  "rewards": [],
+  "pos_x": 100.0,
+  "pos_y": 300.0,
+  "icon_url": null
+}
+```
 
 ### Граф зависимостей
 
 #### `GET /api/pages/<page_id>/dependencies`
+
 Граф зависимостей страницы: позиции узлов и рёбра.
 
+Ответ `200`:
 ```json
 {
+  "level_number": 1,
+  "is_first_page": true,
+  "prev_page_id": null,
   "challenges": [
-    { "id": 1, "challenge_key": "Tome01_L1_N0", "name": "...", "pos_x": 100.0, "pos_y": 200.0, ... }
+    { "id": 1, "challenge_key": "Tome01_L1_N0", "name": "Prologue", "role": "shared", "pos_x": 100.0, "pos_y": 300.0, "icon_url": null },
+    { "id": 2, "challenge_key": "Tome01_L1_N1", "name": "Hex: Ruin", "role": "killer", "pos_x": 300.0, "pos_y": 200.0, "icon_url": "/icons/Tome01_L1_N1.png" }
   ],
   "dependencies": [
     { "a_id": 1, "b_id": 2 }
-  ],
-  "level_number": 1,
-  "is_first_page": true,
-  "prev_page_id": null
+  ]
 }
 ```
 
 #### `GET /api/dependencies?page_ids=1,2,3`
+
 Граф зависимостей нескольких страниц одним запросом.
+
+Ответ `200`:
+```json
+{
+  "1": {
+    "level_number": 1,
+    "is_first_page": true,
+    "prev_page_id": null,
+    "challenges": [...],
+    "dependencies": [...]
+  },
+  "2": {
+    "level_number": 2,
+    "is_first_page": false,
+    "prev_page_id": 1,
+    "challenges": [...],
+    "dependencies": [...]
+  }
+}
+```
 
 ### Прогресс 🔒
 
 #### `GET /api/user/progress`
-Весь прогресс текущего пользователя.
+
+Ответ `200`:
+```json
+[
+  { "challenge_key": "Tome01_L1_N1", "completed": true, "updated_at": "2025-03-01 10:00:00" },
+  { "challenge_key": "Tome01_L1_N2", "completed": false, "updated_at": "2025-03-01 10:05:00" }
+]
+```
 
 #### `PUT /api/user/progress/<challenge_key>`
+
+Запрос:
 ```json
 { "completed": true }
 ```
+Ответ `200`:
+```json
+{ "challenge_key": "Tome01_L1_N1", "completed": true }
+```
+
 Пролог и эпилог выполняются автоматически — ручное изменение возвращает `400`.
 
 #### `GET /api/user/pages/<page_id>/completion`
-Статус выполнения страницы: `{ "is_complete": true, ... }`
+
+Ответ `200`:
+```json
+{ "page_id": 1, "is_complete": true }
+```
 
 #### `GET /api/user/tomes/<archive_key>/completion`
-Статус выполнения тома и каждой его страницы.
+
+Ответ `200`:
+```json
+{
+  "archive_key": "Tome01",
+  "pages": [
+    { "page_id": 1, "level_number": 1, "is_complete": true },
+    { "page_id": 2, "level_number": 2, "is_complete": false }
+  ]
+}
+```
 
 ### Администрирование 🔒 (только для admin)
 
 #### `POST /api/admin/sync-catalog`
+
 Загрузить каталог с [dbd.tricky.lol](https://dbd.tricky.lol). Безопасно вызывать повторно.
 
+Ответ `200`:
+```json
+{ "message": "Synced", "tomes": 20, "pages": 80, "challenges": 640 }
+```
+
 #### `POST /api/admin/scrape-icons`
+
 Запустить скачивание иконок в фоне.
 
+Ответ `200`:
+```json
+{ "message": "Icon scraping started" }
+```
+
 #### `GET /api/admin/scrape-icons/status`
-Прогресс скачивания иконок.
+
+Ответ `200`:
+```json
+{
+  "running": true,
+  "total": 640,
+  "current": 312,
+  "last_run": "2025-03-01 12:00:00",
+  "last_matched": 638,
+  "last_downloaded": 45
+}
+```
 
 #### `GET /api/admin/users`
-Список всех пользователей.
+
+Ответ `200`:
+```json
+[
+  { "id": 1, "username": "admin", "is_admin": true, "created_at": "2025-01-01 12:00:00" },
+  { "id": 2, "username": "user1", "is_admin": false, "created_at": "2025-02-01 09:00:00" }
+]
+```
 
 #### `POST /api/admin/users/<id>/toggle-admin`
+
 Выдать или забрать права администратора.
 
+Ответ `200`:
+```json
+{ "id": 2, "username": "user1", "is_admin": true }
+```
+
 #### `PUT /api/admin/challenges/<challenge_key>/position`
-Задать позицию узла на графе: `{ "pos_x": 100.0, "pos_y": 200.0 }`
+
+Запрос:
+```json
+{ "pos_x": 100.0, "pos_y": 200.0 }
+```
+Ответ `200`:
+```json
+{ "challenge_key": "Tome01_L1_N1", "pos_x": 100.0, "pos_y": 200.0 }
+```
 
 #### `POST /api/admin/challenges/<challenge_key>/dependencies`
-Задать список зависимостей: `{ "neighbor_keys": ["Tome01_L1_N1", "Tome01_L1_N2"] }`
 
-#### `POST /api/admin/pages/<page_id>/auto-layout`
-Автоматически расставить узлы страницы линейно.
+Запрос:
+```json
+{ "neighbor_keys": ["Tome01_L1_N0", "Tome01_L1_N2"] }
+```
+Ответ `200`:
+```json
+{ "challenge_key": "Tome01_L1_N1", "neighbor_keys": ["Tome01_L1_N0", "Tome01_L1_N2"] }
+```

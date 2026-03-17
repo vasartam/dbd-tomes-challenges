@@ -106,11 +106,6 @@ export const api = {
       { linked_keys: linkedKeys }
     ),
 
-  adminAutoLayoutPage: (pageId: number) =>
-    req<{ message: string; challenges_updated: number }>(
-      'POST', `/admin/pages/${pageId}/auto-layout`
-    ),
-
   adminScrapeIcons: () =>
     req<{ message: string }>('POST', '/admin/scrape-icons'),
 

@@ -15,8 +15,6 @@ A progress tracker for Archive Tomes challenges in Dead by Daylight.
   - [Environment Variables](#environment-variables)
   - [First Launch: Creating an Admin](#first-launch-creating-an-admin)
   - [Populating the Catalog](#populating-the-catalog)
-- [Dependency Graph Editor](#dependency-graph-editor)
-- [Deployment via GitHub Actions](#deployment-via-github-actions)
 - [Database Schema](#database-schema)
 - [API](#api)
 
@@ -42,25 +40,15 @@ Each challenge can be marked as completed. Progress is stored server-side and ac
 - 🔵 **Available** — the preceding challenge in the chain is done
 - 🔒 **Locked** — a neighboring challenge must be completed first
 
-The **Prologue** of each page is automatically considered completed as soon as the page becomes accessible — no need to click it manually. The **Epilogue** is also auto-completed once the last challenge before it is marked done. This means challenges on the first page of any tome immediately show as available in global search.
-
-### Visual Dependency Graph
-
-Each tome page is displayed as an interactive canvas graph: challenges are positioned at their visual coordinates, edges show dependencies between them. The graph supports panning and zooming, challenge icons load automatically.
-
 ### Two-Language Support
 
-The interface and challenge content are available in **English** and **Russian**. Language can be toggled in the app header.
-
-### Page and Tome Completion Status
-
-Page tabs show a completion checkmark. A page is considered complete when a full path from the prologue to the epilogue is traversed.
+The interface and challenge content are available in **English** and **Russian**. Language can be toggled via the button in the bottom-right corner.
 
 ### Open API
 
 The first public API that returns not only basic challenge data (name, description, role, rewards), but also:
 - **dependency graph** — which challenges are connected to each other
-- **visual positions** of nodes relative to each other on the canvas
+- **visual positions** of nodes relative to each other
 
 This allows you to build your own clients, visualizations, and tools on top of DBD tome data. No authentication required to read the catalog.
 
@@ -70,7 +58,7 @@ This allows you to build your own clients, visualizations, and tools on top of D
 
 ### Development (without Docker)
 
-**Requirements:** Python 3.10+, Node.js 18+, Yarn
+**Requirements:** Python 3.10+, Node.js 20+, Yarn
 
 ```bash
 git clone https://github.com/vasartam/dbd-tomes-challenges
@@ -106,12 +94,12 @@ Nginx proxies requests to the frontend (port 3001) and backend (port 5001).
 
 File `.env` (created from `.env.example`):
 
-| Variable         | Description                                          |
-|------------------|------------------------------------------------------|
-| `APP_ENV`        | `development` or `production`                        |
-| `JWT_SECRET_KEY` | Secret for signing JWT tokens (use a long string)    |
-| `DB_PATH`        | Path to the SQLite file (e.g. `./db.sqlite`)         |
-| `PORT`           | Backend port (default `5001`)                        |
+| Variable         | Description                                                                                       |
+|------------------|---------------------------------------------------------------------------------------------------|
+| `APP_ENV`        | `development` or `production`                                                                     |
+| `JWT_SECRET_KEY` | Secret for signing JWT tokens. Generate with: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `DB_PATH`        | Path to the SQLite file (e.g. `./db.sqlite`)                                                      |
+| `PORT`           | Backend port (default `5001`)                                                                     |
 
 ### First Launch: Creating an Admin
 
@@ -135,39 +123,7 @@ Once you have admin access, go to the **Admin** section:
 
 2. **Download icons** — click "Download Icons". The app will find challenge icons on the DBD wiki and save them locally. The process runs in the background with progress shown in the UI.
 
-After this, the catalog is fully ready to use.
-
----
-
-## Dependency Graph Editor
-
-For developers and contributors: the **Admin** section contains a link to the dependency graph editor for each tome page.
-
-In the editor you can:
-- Drag challenge nodes to set their visual positions on the canvas
-- Set dependencies between challenges (click a node → select neighbors)
-- Apply **auto-layout** to arrange nodes linearly
-
-Dependencies are stored as an undirected graph — a link between challenges works in both directions.
-
----
-
-## Deployment via GitHub Actions
-
-The repository includes a ready-to-use workflow (`.github/workflows/deploy.yml`):
-
-1. On push to `master`, Docker images for the backend and frontend are built and published to GitHub Container Registry (GHCR)
-2. An SSH command is sent to the server: `docker compose pull && docker compose up -d`
-
-Required repository secrets:
-
-| Secret           | Description                    |
-|------------------|--------------------------------|
-| `DEPLOY_HOST`    | Server IP or domain            |
-| `DEPLOY_USER`    | SSH user                       |
-| `DEPLOY_SSH_KEY` | Private SSH key                |
-
-The server must have Docker and Docker Compose installed, along with `GHCR_TOKEN` and `GHCR_USER` environment variables for GHCR authentication.
+3. **Dependency graph editor** — each tome page has a link to an editor where you can drag challenge nodes to set their visual positions and configure dependencies between challenges (click a node → select neighbors). Dependencies are stored as an undirected graph — a link between challenges works in both directions.
 
 ---
 
@@ -247,22 +203,34 @@ Add `lang=ru` to get Russian names and descriptions.
 ### Auth
 
 #### `POST /api/auth/register`
+
+Request:
 ```json
 { "username": "my_user", "password": "secret123" }
 ```
-Response `201`: `{ "message": "Registered successfully" }`
+Response `201`:
+```json
+{ "message": "Registered successfully" }
+```
 
 #### `POST /api/auth/login`
+
+Request:
 ```json
 { "username": "my_user", "password": "secret123" }
 ```
-Response `200`: `{ "access_token": "eyJ...", "username": "my_user" }`
+Response `200`:
+```json
+{ "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", "username": "my_user" }
+```
 
 Token is valid for **7 days**.
 
 ### Profile
 
 #### `GET /api/user/profile` 🔒
+
+Response `200`:
 ```json
 { "id": 1, "username": "my_user", "is_admin": false, "created_at": "2025-01-01 12:00:00" }
 ```
@@ -270,15 +238,65 @@ Token is valid for **7 days**.
 ### Catalog
 
 #### `GET /api/tomes`
-List of all tomes.
+
+Response `200`:
+```json
+[
+  { "id": 1, "archive_key": "Tome01", "name": "Tome I - Awakening", "start_ts": 1573171200, "end_ts": null },
+  { "id": 2, "archive_key": "Tome02", "name": "Tome II - Reckoning", "start_ts": 1578441600, "end_ts": null }
+]
+```
 
 #### `GET /api/tomes/<archive_key>`
+
 Tome with its pages. Example: `GET /api/tomes/Tome01`
 
+Response `200`:
+```json
+{
+  "id": 1,
+  "archive_key": "Tome01",
+  "name": "Tome I - Awakening",
+  "start_ts": 1573171200,
+  "end_ts": null,
+  "pages": [
+    { "id": 1, "level_number": 1 },
+    { "id": 2, "level_number": 2 }
+  ]
+}
+```
+
 #### `GET /api/pages/<page_id>`
+
 Page with its challenges. Example: `GET /api/pages/1`
 
+Response `200`:
+```json
+{
+  "id": 1,
+  "tome_id": 1,
+  "level_number": 1,
+  "challenges": [
+    {
+      "id": 1,
+      "challenge_key": "Tome01_L1_N0",
+      "node_index": 0,
+      "name": "Prologue",
+      "name_ru": "Пролог",
+      "role": "shared",
+      "objective": "...",
+      "objective_ru": "...",
+      "rewards": [{"type": "bloodpoints", "id": "bloodpoints", "amount": 0}],
+      "pos_x": 100.0,
+      "pos_y": 300.0,
+      "icon_url": null
+    }
+  ]
+}
+```
+
 #### `GET /api/challenges`
+
 Challenge list with filtering.
 
 | Parameter | Description                              |
@@ -291,70 +309,208 @@ Challenge list with filtering.
 
 Example: `GET /api/challenges?q=totem&role=killer&lang=en`
 
+Response `200`:
+```json
+[
+  {
+    "id": 5,
+    "challenge_key": "Tome01_L1_N4",
+    "node_index": 4,
+    "name": "Hex: Ruin",
+    "name_ru": "Проклятие: Разруха",
+    "role": "killer",
+    "objective": "Cleanse or bless 4 totems in a single match.",
+    "objective_ru": "Очистите или освятите 4 тотема за одну игру.",
+    "rewards": [{"type": "bloodpoints", "id": "bloodpoints", "amount": 5000}],
+    "icon_url": "/icons/Tome01_L1_N4.png"
+  }
+]
+```
+
 #### `GET /api/challenges/<challenge_key>`
+
 Single challenge. Example: `GET /api/challenges/Tome01_L1_N0`
+
+Response `200`:
+```json
+{
+  "id": 1,
+  "challenge_key": "Tome01_L1_N0",
+  "node_index": 0,
+  "name": "Prologue",
+  "name_ru": "Пролог",
+  "role": "shared",
+  "objective": "...",
+  "objective_ru": "...",
+  "rewards": [],
+  "pos_x": 100.0,
+  "pos_y": 300.0,
+  "icon_url": null
+}
+```
 
 ### Dependency Graph
 
 #### `GET /api/pages/<page_id>/dependencies`
+
 Dependency graph for a page: node positions and edges.
 
+Response `200`:
 ```json
 {
+  "level_number": 1,
+  "is_first_page": true,
+  "prev_page_id": null,
   "challenges": [
-    { "id": 1, "challenge_key": "Tome01_L1_N0", "name": "...", "pos_x": 100.0, "pos_y": 200.0, ... }
+    { "id": 1, "challenge_key": "Tome01_L1_N0", "name": "Prologue", "role": "shared", "pos_x": 100.0, "pos_y": 300.0, "icon_url": null },
+    { "id": 2, "challenge_key": "Tome01_L1_N1", "name": "Hex: Ruin", "role": "killer", "pos_x": 300.0, "pos_y": 200.0, "icon_url": "/icons/Tome01_L1_N1.png" }
   ],
   "dependencies": [
     { "a_id": 1, "b_id": 2 }
-  ],
-  "level_number": 1,
-  "is_first_page": true,
-  "prev_page_id": null
+  ]
 }
 ```
 
 #### `GET /api/dependencies?page_ids=1,2,3`
+
 Dependency graphs for multiple pages in a single request.
+
+Response `200`:
+```json
+{
+  "1": {
+    "level_number": 1,
+    "is_first_page": true,
+    "prev_page_id": null,
+    "challenges": [...],
+    "dependencies": [...]
+  },
+  "2": {
+    "level_number": 2,
+    "is_first_page": false,
+    "prev_page_id": 1,
+    "challenges": [...],
+    "dependencies": [...]
+  }
+}
+```
 
 ### Progress 🔒
 
 #### `GET /api/user/progress`
-All progress for the current user.
+
+Response `200`:
+```json
+[
+  { "challenge_key": "Tome01_L1_N1", "completed": true, "updated_at": "2025-03-01 10:00:00" },
+  { "challenge_key": "Tome01_L1_N2", "completed": false, "updated_at": "2025-03-01 10:05:00" }
+]
+```
 
 #### `PUT /api/user/progress/<challenge_key>`
+
+Request:
 ```json
 { "completed": true }
 ```
+Response `200`:
+```json
+{ "challenge_key": "Tome01_L1_N1", "completed": true }
+```
+
 Prologue and epilogue are auto-completed — manual updates return `400`.
 
 #### `GET /api/user/pages/<page_id>/completion`
-Page completion status: `{ "is_complete": true, ... }`
+
+Response `200`:
+```json
+{ "page_id": 1, "is_complete": true }
+```
 
 #### `GET /api/user/tomes/<archive_key>/completion`
-Tome completion status for each page.
+
+Response `200`:
+```json
+{
+  "archive_key": "Tome01",
+  "pages": [
+    { "page_id": 1, "level_number": 1, "is_complete": true },
+    { "page_id": 2, "level_number": 2, "is_complete": false }
+  ]
+}
+```
 
 ### Admin 🔒 (admin only)
 
 #### `POST /api/admin/sync-catalog`
+
 Sync catalog from [dbd.tricky.lol](https://dbd.tricky.lol). Safe to call repeatedly.
 
+Response `200`:
+```json
+{ "message": "Synced", "tomes": 20, "pages": 80, "challenges": 640 }
+```
+
 #### `POST /api/admin/scrape-icons`
+
 Start icon scraping in the background.
 
+Response `200`:
+```json
+{ "message": "Icon scraping started" }
+```
+
 #### `GET /api/admin/scrape-icons/status`
-Icon scraping progress.
+
+Response `200`:
+```json
+{
+  "running": true,
+  "total": 640,
+  "current": 312,
+  "last_run": "2025-03-01 12:00:00",
+  "last_matched": 638,
+  "last_downloaded": 45
+}
+```
 
 #### `GET /api/admin/users`
-List all users.
+
+Response `200`:
+```json
+[
+  { "id": 1, "username": "admin", "is_admin": true, "created_at": "2025-01-01 12:00:00" },
+  { "id": 2, "username": "user1", "is_admin": false, "created_at": "2025-02-01 09:00:00" }
+]
+```
 
 #### `POST /api/admin/users/<id>/toggle-admin`
+
 Grant or revoke admin rights.
 
+Response `200`:
+```json
+{ "id": 2, "username": "user1", "is_admin": true }
+```
+
 #### `PUT /api/admin/challenges/<challenge_key>/position`
-Set node position on the graph: `{ "pos_x": 100.0, "pos_y": 200.0 }`
+
+Request:
+```json
+{ "pos_x": 100.0, "pos_y": 200.0 }
+```
+Response `200`:
+```json
+{ "challenge_key": "Tome01_L1_N1", "pos_x": 100.0, "pos_y": 200.0 }
+```
 
 #### `POST /api/admin/challenges/<challenge_key>/dependencies`
-Set dependency list: `{ "neighbor_keys": ["Tome01_L1_N1", "Tome01_L1_N2"] }`
 
-#### `POST /api/admin/pages/<page_id>/auto-layout`
-Auto-arrange page nodes in a linear layout.
+Request:
+```json
+{ "neighbor_keys": ["Tome01_L1_N0", "Tome01_L1_N2"] }
+```
+Response `200`:
+```json
+{ "challenge_key": "Tome01_L1_N1", "neighbor_keys": ["Tome01_L1_N0", "Tome01_L1_N2"] }
+```
