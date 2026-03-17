@@ -542,16 +542,49 @@ def get_progress():
     return jsonify(result)
 
 
+def _is_epilogue_auto_completed(db: sqlite3.Connection, epilogue_id: int, user_id: int) -> bool:
+    """Эпилог считается выполненным, если выполнен хотя бы один из его соседей."""
+    neighbors = db.execute(
+        """SELECT CASE WHEN child_id = ? THEN parent_id ELSE child_id END AS neighbor_id
+           FROM challenge_dependencies
+           WHERE child_id = ? OR parent_id = ?""",
+        (epilogue_id, epilogue_id, epilogue_id)
+    ).fetchall()
+    if not neighbors:
+        return False
+    neighbor_ids = [n["neighbor_id"] for n in neighbors]
+    placeholders = ",".join("?" * len(neighbor_ids))
+    completed = db.execute(
+        f"SELECT 1 FROM user_challenge_progress "
+        f"WHERE user_id = ? AND completed = 1 AND challenge_id IN ({placeholders}) LIMIT 1",
+        [user_id] + neighbor_ids
+    ).fetchone()
+    return completed is not None
+
+
+def _is_any_epilogue_auto_completed(db: sqlite3.Connection, page_id: int, user_id: int) -> bool:
+    """Проверить, авто-выполнен ли хотя бы один эпилог на странице."""
+    challenges = db.execute(
+        "SELECT id, name FROM challenges WHERE page_id = ?", (page_id,)
+    ).fetchall()
+    epilogue_ids = [c["id"] for c in challenges if is_epilogue(c["name"])]
+    if not epilogue_ids:
+        return True  # нет эпилогов — считаем страницу доступной
+    return any(_is_epilogue_auto_completed(db, eid, user_id) for eid in epilogue_ids)
+
+
 def is_challenge_available(db: sqlite3.Connection, challenge_id: int, user_id: int) -> bool:
     """
     Проверить, доступно ли задание для выполнения данным пользователем.
 
     Правила:
-    - Пролог на первой странице тома — всегда доступен.
-    - Пролог на последующих страницах — доступен, если выполнен хотя бы один эпилог
-      предыдущей страницы.
+    - Пролог на первой странице тома — всегда доступен (авто-выполнен).
+    - Пролог на последующих страницах — доступен, если авто-выполнен хотя бы один
+      эпилог предыдущей страницы (т.е. выполнен хотя бы один сосед того эпилога).
     - Остальные задания без связей — доступны.
-    - Остальные задания со связями — доступны, если хотя бы один сосед выполнен.
+    - Остальные задания со связями — доступны, если хотя бы один сосед эффективно
+      выполнен: пролог-сосед считается выполненным если его страница доступна,
+      эпилог-сосед — если выполнен хотя бы один его сосед.
     """
     challenge = db.execute(
         "SELECT id, name, page_id FROM challenges WHERE id = ?", (challenge_id,)
@@ -576,26 +609,10 @@ def is_challenge_available(db: sqlite3.Connection, challenge_id: int, user_id: i
         if not prev_page:
             return True
 
-        # Иначе нужен выполненный эпилог предыдущей страницы
-        epilogues = db.execute(
-            "SELECT c.id FROM challenges c WHERE c.page_id = ?", (prev_page["id"],)
-        ).fetchall()
-        epilogue_ids = [e["id"] for e in epilogues if is_epilogue(
-            db.execute("SELECT name FROM challenges WHERE id = ?", (e["id"],)).fetchone()["name"]
-        )]
-        if not epilogue_ids:
-            return True  # нет эпилогов — считаем доступным
-
-        placeholders = ",".join("?" * len(epilogue_ids))
-        completed = db.execute(
-            f"SELECT 1 FROM user_challenge_progress "
-            f"WHERE user_id = ? AND completed = 1 AND challenge_id IN ({placeholders}) LIMIT 1",
-            [user_id] + epilogue_ids
-        ).fetchone()
-        return completed is not None
+        # Иначе нужен авто-выполненный эпилог предыдущей страницы
+        return _is_any_epilogue_auto_completed(db, prev_page["id"], user_id)
 
     # ── Обычное задание / эпилог ──────────────────────────────────────────────
-    # Получаем всех соседей (ненаправленный граф)
     neighbors = db.execute(
         """SELECT CASE WHEN child_id = ? THEN parent_id ELSE child_id END AS neighbor_id
            FROM challenge_dependencies
@@ -606,14 +623,31 @@ def is_challenge_available(db: sqlite3.Connection, challenge_id: int, user_id: i
     if not neighbors:
         return True  # нет связей — доступно
 
-    neighbor_ids = [n["neighbor_id"] for n in neighbors]
-    placeholders = ",".join("?" * len(neighbor_ids))
-    completed = db.execute(
-        f"SELECT 1 FROM user_challenge_progress "
-        f"WHERE user_id = ? AND completed = 1 AND challenge_id IN ({placeholders}) LIMIT 1",
-        [user_id] + neighbor_ids
-    ).fetchone()
-    return completed is not None
+    for n in neighbors:
+        neighbor_id = n["neighbor_id"]
+        neighbor = db.execute(
+            "SELECT name FROM challenges WHERE id = ?", (neighbor_id,)
+        ).fetchone()
+        neighbor_name = neighbor["name"] if neighbor else None
+
+        if is_prologue(neighbor_name):
+            # Пролог авто-выполнен, если его страница доступна
+            if is_challenge_available(db, neighbor_id, user_id):
+                return True
+        elif is_epilogue(neighbor_name):
+            # Эпилог авто-выполнен, если выполнен хотя бы один его сосед
+            if _is_epilogue_auto_completed(db, neighbor_id, user_id):
+                return True
+        else:
+            completed = db.execute(
+                "SELECT 1 FROM user_challenge_progress "
+                "WHERE user_id = ? AND completed = 1 AND challenge_id = ? LIMIT 1",
+                (user_id, neighbor_id)
+            ).fetchone()
+            if completed:
+                return True
+
+    return False
 
 
 @app.put("/api/user/progress/<challenge_key>")
@@ -631,10 +665,14 @@ def set_progress(challenge_key: str):
 
     db = get_db()
     challenge = db.execute(
-        "SELECT id FROM challenges WHERE challenge_key = ?", (challenge_key,)
+        "SELECT id, name FROM challenges WHERE challenge_key = ?", (challenge_key,)
     ).fetchone()
     if not challenge:
         return jsonify({"error": "Challenge not found"}), 404
+
+    # Пролог и эпилог выполняются автоматически — ручное изменение запрещено
+    if is_prologue(challenge["name"]) or is_epilogue(challenge["name"]):
+        return jsonify({"error": "Prologue and epilogue are completed automatically"}), 400
 
     # Проверяем доступность только при попытке отметить как выполненное
     if completed and not is_challenge_available(db, challenge["id"], user_id):
@@ -855,9 +893,16 @@ def get_page_dependencies(page_id: int):
     lang = get_request_lang()
     db = get_db()
 
-    page = db.execute("SELECT id FROM pages WHERE id = ?", (page_id,)).fetchone()
+    page = db.execute(
+        "SELECT id, tome_id, level_number FROM pages WHERE id = ?", (page_id,)
+    ).fetchone()
     if not page:
         return jsonify({"error": "Page not found"}), 404
+
+    prev_page = db.execute(
+        "SELECT id FROM pages WHERE tome_id = ? AND level_number < ? ORDER BY level_number DESC LIMIT 1",
+        (page["tome_id"], page["level_number"])
+    ).fetchone()
 
     challenges = db.execute("""
         SELECT id, challenge_key, name, role, objective, pos_x, pos_y, name_ru, objective_ru, icon_url
@@ -867,7 +912,12 @@ def get_page_dependencies(page_id: int):
     """, (page_id,)).fetchall()
 
     if not challenges:
-        return jsonify({"challenges": [], "dependencies": []})
+        return jsonify({
+            "challenges": [], "dependencies": [],
+            "level_number": page["level_number"],
+            "is_first_page": prev_page is None,
+            "prev_page_id": None,
+        })
 
     challenge_ids = [c["id"] for c in challenges]
     placeholders = ",".join("?" * len(challenge_ids))
@@ -890,7 +940,10 @@ def get_page_dependencies(page_id: int):
 
     return jsonify({
         "challenges": [localize_challenge(row_to_dict(c), lang) for c in challenges],
-        "dependencies": dependencies
+        "dependencies": dependencies,
+        "level_number": page["level_number"],
+        "is_first_page": prev_page is None,
+        "prev_page_id": prev_page["id"] if prev_page else None,
     })
 
 
@@ -916,6 +969,12 @@ def get_bulk_dependencies():
         return jsonify({})
 
     placeholders = ",".join("?" * len(page_ids))
+
+    # Загружаем метаданные страниц (tome_id, level_number)
+    page_rows = db.execute(f"""
+        SELECT id, tome_id, level_number FROM pages WHERE id IN ({placeholders})
+    """, page_ids).fetchall()
+    page_meta: dict = {r["id"]: r for r in page_rows}
 
     # Загружаем все задания указанных страниц одним запросом
     rows = db.execute(f"""
@@ -957,10 +1016,26 @@ def get_bulk_dependencies():
             if page_id in deps_by_page:
                 deps_by_page[page_id].append({"a_id": a_id, "b_id": b_id})
 
+    # Определяем prev_page_id для каждой страницы (запрос в БД для корректности)
+    prev_page_ids: dict = {}
+    for pid in page_ids:
+        meta = page_meta.get(pid)
+        if not meta:
+            prev_page_ids[pid] = None
+            continue
+        prev = db.execute(
+            "SELECT id FROM pages WHERE tome_id = ? AND level_number < ? ORDER BY level_number DESC LIMIT 1",
+            (meta["tome_id"], meta["level_number"])
+        ).fetchone()
+        prev_page_ids[pid] = prev["id"] if prev else None
+
     return jsonify({
         str(pid): {
             "challenges": [localize_challenge(row_to_dict(c), lang) for c in challenges_by_page[pid]],
             "dependencies": deps_by_page[pid],
+            "level_number": page_meta[pid]["level_number"] if pid in page_meta else None,
+            "is_first_page": prev_page_ids.get(pid) is None,
+            "prev_page_id": prev_page_ids.get(pid),
         }
         for pid in page_ids
     })
@@ -1417,10 +1492,10 @@ def is_epilogue(name: str | None) -> bool:
 def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) -> dict:
     """
     Проверить выполнение страницы.
-    Страница выполнена, если есть путь от любого пролога до любого эпилога,
-    где все задания на пути выполнены.
+    Пролог считается авто-выполненным (всегда).
+    Эпилог считается авто-выполненным, если выполнен хотя бы один его сосед.
+    Страница выполнена, если есть путь от пролога до эпилога по эффективно-выполненным узлам.
     """
-    # Получить все задания страницы
     challenges = db.execute("""
         SELECT c.id, c.name, c.challenge_key
         FROM challenges c
@@ -1432,14 +1507,13 @@ def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) ->
 
     challenge_ids = {c["id"] for c in challenges}
 
-    # Прологи и эпилоги
     prologue_ids = {c["id"] for c in challenges if is_prologue(c["name"])}
     epilogue_ids = {c["id"] for c in challenges if is_epilogue(c["name"])}
 
     if not prologue_ids or not epilogue_ids:
         return {"is_complete": False, "reason": "no_prologue_or_epilogue"}
 
-    # Выполненные задания
+    # Выполненные задания пользователя
     completed_rows = db.execute("""
         SELECT challenge_id
         FROM user_challenge_progress
@@ -1447,7 +1521,7 @@ def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) ->
     """.format(",".join("?" * len(challenge_ids))), [user_id] + list(challenge_ids)).fetchall()
     completed_ids = {r["challenge_id"] for r in completed_rows}
 
-    # Связи (ненаправленный граф: ищем в обоих направлениях)
+    # Граф смежности
     id_list = list(challenge_ids)
     placeholders = ",".join("?" * len(id_list))
     deps = db.execute(f"""
@@ -1456,19 +1530,24 @@ def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) ->
         WHERE child_id IN ({placeholders}) OR parent_id IN ({placeholders})
     """, id_list + id_list).fetchall()
 
-    # Построить ненаправленный граф смежности
     adjacency: dict[int, set[int]] = {}
     for d in deps:
         adjacency.setdefault(d["child_id"], set()).add(d["parent_id"])
         adjacency.setdefault(d["parent_id"], set()).add(d["child_id"])
 
-    # BFS от прологов к эпилогам по ненаправленному графу выполненных узлов
+    # Эпилоги авто-выполнены, если выполнен хотя бы один их сосед
+    auto_completed_epilogues = {
+        eid for eid in epilogue_ids
+        if any(n in completed_ids for n in adjacency.get(eid, set()))
+    }
+
+    # Эффективное множество: пользовательские + все прологи (авто) + авто-эпилоги
+    effective_completed = completed_ids | prologue_ids | auto_completed_epilogues
+
+    # BFS от прологов по эффективно-выполненным узлам
     from collections import deque
 
     for start_id in prologue_ids:
-        if start_id not in completed_ids:
-            continue  # пролог не выполнен
-
         queue = deque([start_id])
         visited = {start_id}
 
@@ -1479,7 +1558,7 @@ def check_page_completion(db: sqlite3.Connection, page_id: int, user_id: int) ->
                 return {"is_complete": True, "reason": "path_found"}
 
             for neighbor_id in adjacency.get(current, []):
-                if neighbor_id not in visited and neighbor_id in completed_ids:
+                if neighbor_id not in visited and neighbor_id in effective_completed:
                     visited.add(neighbor_id)
                     queue.append(neighbor_id)
 

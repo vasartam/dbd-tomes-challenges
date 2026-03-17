@@ -82,6 +82,9 @@ export interface ChallengeInfo {
 export interface PageDependencies {
   challenges: ChallengeInfo[]
   dependencies: Dependency[]
+  level_number: number
+  is_first_page: boolean
+  prev_page_id: number | null
 }
 
 // Статус выполнения страницы/тома

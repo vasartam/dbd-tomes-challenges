@@ -65,22 +65,14 @@ export default observer(function ChallengeCard({ challenge, status, subtitle, on
         : ''
 
   const renderIcon = () => {
-    if (isDone) {
-      return <Icon24CheckCircleOutline fill="#4ade80" />
-    }
-    if (isLocked) {
-      return <Icon24LockOutline fill="var(--vkui--color_icon_tertiary)" />
-    }
-    switch (nodeType) {
-      case 'prologue':
-        return <Icon24Play fill={nodeColor} />
-      case 'epilogue':
-        return <Icon24FlagFinish fill={nodeColor} />
-      case 'reward':
-        return <Icon24Gift fill={nodeColor} />
-      default:
-        return <Icon24CircleSmallOutline fill="var(--vkui--color_icon_secondary)" />
-    }
+    // Прологи и эпилоги всегда показывают свою иконку (без галочки и замка)
+    if (nodeType === 'prologue') return <Icon24Play fill={nodeColor} />
+    if (nodeType === 'epilogue') return <Icon24FlagFinish fill={nodeColor} />
+    if (nodeType === 'reward') return <Icon24Gift fill={nodeColor} />
+
+    if (isDone) return <Icon24CheckCircleOutline fill="#4ade80" />
+    if (isLocked) return <Icon24LockOutline fill="var(--vkui--color_icon_tertiary)" />
+    return <Icon24CircleSmallOutline fill="var(--vkui--color_icon_secondary)" />
   }
 
   if (compact || isSpecialNode) {

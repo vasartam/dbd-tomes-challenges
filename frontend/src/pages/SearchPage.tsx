@@ -132,7 +132,46 @@ export default observer(function SearchPage() {
       })
       return linked.some(nid => {
         const neighbor = deps.challenges.find(c => c.id === nid)
-        return neighbor && progressStore.isCompleted(neighbor.challenge_key)
+        if (!neighbor) return false
+
+        if (getNodeType(neighbor.name) === 'prologue') {
+          // Пролог авто-выполнен если страница доступна
+          if (deps.is_first_page) return true
+          if (deps.prev_page_id) {
+            const prevKey = `${deps.prev_page_id}_${lang}`
+            const prevDeps = catalogStore.deps.get(prevKey)
+            if (prevDeps) {
+              const prevEpilogues = prevDeps.challenges.filter(c => getNodeType(c.name) === 'epilogue')
+              return prevEpilogues.some(epilogue => {
+                const epilogueLinked = prevDeps.dependencies.flatMap(d => {
+                  if (d.a_id === epilogue.id) return [d.b_id]
+                  if (d.b_id === epilogue.id) return [d.a_id]
+                  return []
+                })
+                return epilogueLinked.some(eid => {
+                  const en = prevDeps.challenges.find(c => c.id === eid)
+                  return en && progressStore.isCompleted(en.challenge_key)
+                })
+              })
+            }
+          }
+          return false
+        }
+
+        if (getNodeType(neighbor.name) === 'epilogue') {
+          // Эпилог авто-выполнен если выполнен хотя бы один его сосед
+          const epilogueLinked = deps.dependencies.flatMap(d => {
+            if (d.a_id === neighbor.id) return [d.b_id]
+            if (d.b_id === neighbor.id) return [d.a_id]
+            return []
+          })
+          return epilogueLinked.some(eid => {
+            const en = deps.challenges.find(c => c.id === eid)
+            return en && progressStore.isCompleted(en.challenge_key)
+          })
+        }
+
+        return progressStore.isCompleted(neighbor.challenge_key)
       })
     }
 

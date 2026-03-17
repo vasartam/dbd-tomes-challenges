@@ -145,27 +145,71 @@ export default observer(function TomePage({ archiveKey, initialPageLevel, onBack
   const findChallenge = (id: number): ChallengeInfo | undefined =>
     graphChallenges.find(c => c.id === id)
 
-  const getStatus = (challenge: ChallengeInfo): ChallengeStatus => {
-    if (progressStore.isCompleted(challenge.challenge_key)) return 'completed'
+  // Доступна ли текущая страница (т.е. авто-выполнен ли пролог текущей страницы)
+  const isCurrentPageAccessible = (() => {
+    if (activePage === 0) return true
+    const prevPage = pages[activePage - 1]
+    if (!prevPage) return false
+    const prevDeps = dependencies.get(prevPage.id)
+    if (!prevDeps) return false
+    const prevEpilogues = prevDeps.challenges.filter(c => getNodeType(c.name) === 'epilogue')
+    return prevEpilogues.some(epilogue => {
+      const epilogueLinked = prevDeps.dependencies.flatMap(d => {
+        if (d.a_id === epilogue.id) return [d.b_id]
+        if (d.b_id === epilogue.id) return [d.a_id]
+        return []
+      })
+      return epilogueLinked.some(eid => {
+        const en = prevDeps.challenges.find(c => c.id === eid)
+        return en && progressStore.isCompleted(en.challenge_key)
+      })
+    })
+  })()
 
-    if (getNodeType(challenge.name) === 'prologue') {
-      // На первой странице пролог всегда доступен
-      if (activePage === 0) return 'available'
-      // На остальных — доступен, если выполнен хотя бы один эпилог предыдущей страницы
-      const prevPage = pages[activePage - 1]
-      const prevEpilogues = prevPage?.challenges.filter(c => getNodeType(c.name) === 'epilogue') ?? []
-      const prevCompleted = prevEpilogues.some(c => progressStore.isCompleted(c.challenge_key))
-      return prevCompleted ? 'available' : 'locked'
+  // Эффективно ли выполнен узел (с учётом авто-выполнения прологов и эпилогов)
+  const isEffectivelyCompleted = (c: ChallengeInfo): boolean => {
+    const ntype = getNodeType(c.name)
+    if (ntype === 'prologue') return isCurrentPageAccessible
+    if (ntype === 'epilogue') {
+      const epilogueLinked = getLinked(c.id)
+      return epilogueLinked.some(eid => {
+        const en = findChallenge(eid)
+        return en && progressStore.isCompleted(en.challenge_key)
+      })
     }
+    return progressStore.isCompleted(c.challenge_key)
+  }
+
+  const getStatus = (challenge: ChallengeInfo): ChallengeStatus => {
+    const nodeType = getNodeType(challenge.name)
+
+    if (nodeType === 'prologue') {
+      // Пролог авто-выполнен когда страница доступна
+      return isCurrentPageAccessible ? 'completed' : 'locked'
+    }
+
+    if (nodeType === 'epilogue') {
+      // Эпилог авто-выполнен когда выполнен хотя бы один его сосед
+      if (useGraph && currentDeps) {
+        const linked = getLinked(challenge.id)
+        if (linked.some(nid => {
+          const neighbor = findChallenge(nid)
+          return neighbor && progressStore.isCompleted(neighbor.challenge_key)
+        })) return 'completed'
+      }
+      return isCurrentPageAccessible ? 'available' : 'locked'
+    }
+
+    if (progressStore.isCompleted(challenge.challenge_key)) return 'completed'
 
     if (useGraph && currentDeps) {
       const linked = getLinked(challenge.id)
       if (linked.length === 0) return 'available'
-      const hasCompletedNeighbor = linked.some(neighborId => {
+      const hasEffectiveNeighbor = linked.some(neighborId => {
         const neighbor = findChallenge(neighborId)
-        return neighbor && progressStore.isCompleted(neighbor.challenge_key)
+        return neighbor && isEffectivelyCompleted(neighbor)
       })
-      return hasCompletedNeighbor ? 'available' : 'locked'
+      return hasEffectiveNeighbor ? 'available' : 'locked'
     }
 
     const challs = realChallenges
@@ -175,54 +219,29 @@ export default observer(function TomePage({ archiveKey, initialPageLevel, onBack
   }
 
   const handleChallengeClick = async (challenge: ChallengeInfo) => {
-    const done = progressStore.isCompleted(challenge.challenge_key)
     const nodeType = getNodeType(challenge.name)
 
-    if (nodeType === 'prologue' || nodeType === 'epilogue') {
-      // При снятии отметки с пролога запрещаем, если есть выполненные соседние задания
-      if (done && nodeType === 'prologue' && useGraph && currentDeps) {
-        const linked = getLinked(challenge.id)
-        const completedNeighbors = linked.filter(nid => {
-          const neighbor = findChallenge(nid)
-          return neighbor && progressStore.isCompleted(neighbor.challenge_key)
-        })
-        if (completedNeighbors.length > 0) {
-          const names = completedNeighbors
-            .map(nid => findChallenge(nid))
-            .filter(Boolean)
-            .map(c => `«${c!.name || c!.challenge_key}»`)
-            .join(', ')
-          showError(t('challenge.unmarkFirst', { names }))
-          return
-        }
-      }
-      try {
-        await progressStore.toggle(challenge.challenge_key, !done)
-        if (currentPage) {
-          const completion = await catalogStore.refreshPageCompletion(currentPage.id)
-          setPageCompletion(prev => new Map(prev).set(currentPage.id, completion))
-        }
-      } catch (e) {
-        showError((e as Error).message)
-      }
-      return
-    }
+    // Пролог и эпилог выполняются автоматически — игнорируем клик
+    if (nodeType === 'prologue' || nodeType === 'epilogue') return
+
+    const done = progressStore.isCompleted(challenge.challenge_key)
 
     if (!done) {
       if (useGraph && currentDeps) {
         const linked = getLinked(challenge.id)
         if (linked.length > 0) {
-          const hasCompletedNeighbor = linked.some(neighborId => {
+          const hasEffectiveNeighbor = linked.some(neighborId => {
             const neighbor = findChallenge(neighborId)
-            return neighbor && progressStore.isCompleted(neighbor.challenge_key)
+            return neighbor && isEffectivelyCompleted(neighbor)
           })
-          if (!hasCompletedNeighbor) {
-            const neighborNames = linked
+          if (!hasEffectiveNeighbor) {
+            // Показываем только обычные задания в сообщении об ошибке
+            const regularNeighborNames = linked
               .map(nid => findChallenge(nid))
-              .filter(Boolean)
+              .filter(n => n && getNodeType(n.name) === 'challenge')
               .map(c => c!.name || c!.challenge_key)
               .join(', ')
-            showError(t('challenge.completeOneOf', { names: neighborNames }))
+            showError(t('challenge.completeOneOf', { names: regularNeighborNames }))
             return
           }
         }
@@ -252,15 +271,15 @@ export default observer(function TomePage({ archiveKey, initialPageLevel, onBack
         const wouldBlock = linked.filter(neighborId => {
           const neighbor = findChallenge(neighborId)
           if (!neighbor || !progressStore.isCompleted(neighbor.challenge_key)) return false
-          // Пролог не зависит от соседей — его нельзя «заблокировать» снятием отметки с обычного задания
-          if (getNodeType(neighbor.name) === 'prologue') return false
+          // Пролог и эпилог авто-управляются — их нельзя заблокировать снятием обычного задания
+          if (getNodeType(neighbor.name) !== 'challenge') return false
           const neighborLinked = getLinked(neighborId)
-          const otherCompleted = neighborLinked.filter(otherId => {
+          const otherEffective = neighborLinked.filter(otherId => {
             if (otherId === challenge.id) return false
             const other = findChallenge(otherId)
-            return other && progressStore.isCompleted(other.challenge_key)
+            return other && isEffectivelyCompleted(other)
           })
-          return otherCompleted.length === 0
+          return otherEffective.length === 0
         })
         if (wouldBlock.length > 0) {
           const names = wouldBlock

@@ -81,6 +81,22 @@ class CatalogStore {
         this.deps.set(`${pageIdStr}_${lang}`, deps)
       }
     })
+
+    // Загружаем deps предыдущих страниц для корректного определения доступности прологов
+    const prevPageIds = Object.values(data)
+      .map(d => d.prev_page_id)
+      .filter((id): id is number => id !== null && !this.deps.has(`${id}_${lang}`))
+    if (prevPageIds.length > 0) {
+      const prevData = await apiReq<Record<string, PageDependencies>>(
+        'GET',
+        `/dependencies?page_ids=${prevPageIds.join(',')}&lang=${lang}`
+      )
+      runInAction(() => {
+        for (const [pageIdStr, deps] of Object.entries(prevData)) {
+          this.deps.set(`${pageIdStr}_${lang}`, deps)
+        }
+      })
+    }
   }
 
   async loadPageCompletion(pageId: number): Promise<PageCompletionStatus> {

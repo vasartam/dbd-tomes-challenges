@@ -300,8 +300,9 @@ export default observer(function DependencyGraph({
         ctx.restore()
       }
 
-      // Галочка для выполненных заданий
-      if (isCompleted) {
+      // Галочка для выполненных заданий (только для обычных заданий, не для прологов/эпилогов)
+      const nodeT = getNodeType(challenge.name)
+      if (isCompleted && nodeT !== 'prologue' && nodeT !== 'epilogue') {
         const cs = 8 / scale
         const cy = pos.y - r + 6 / scale
         ctx.save()
@@ -608,19 +609,24 @@ export default observer(function DependencyGraph({
               dangerouslySetInnerHTML={{ __html: hoveredChallenge.objective.slice(0, 300) }}
             />
           )}
-          {mode === 'view' && getStatus && (
-            <div style={{
-              marginTop: 8,
-              fontSize:  11,
-              color: getStatus(hoveredChallenge) === 'completed' ? 'rgba(255,255,255,0.5)'
-                : getStatus(hoveredChallenge) === 'available'   ? 'rgba(255,255,255,0.5)'
-                : '#f87171',
-            }}>
-              {getStatus(hoveredChallenge) === 'completed' ? '✓ Выполнено'
-                : getStatus(hoveredChallenge) === 'available' ? 'Доступно'
-                : '🔒 Заблокировано'}
-            </div>
-          )}
+          {mode === 'view' && getStatus && (() => {
+            const nt = getNodeType(hoveredChallenge.name)
+            if (nt === 'prologue' || nt === 'epilogue') return null
+            const st = getStatus(hoveredChallenge)
+            return (
+              <div style={{
+                marginTop: 8,
+                fontSize:  11,
+                color: st === 'completed' ? 'rgba(255,255,255,0.5)'
+                  : st === 'available'   ? 'rgba(255,255,255,0.5)'
+                  : '#f87171',
+              }}>
+                {st === 'completed' ? '✓ Выполнено'
+                  : st === 'available' ? 'Доступно'
+                  : '🔒 Заблокировано'}
+              </div>
+            )
+          })()}
         </div>
       )}
     </div>

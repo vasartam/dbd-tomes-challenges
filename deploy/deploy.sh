@@ -26,4 +26,28 @@ cd ..
 sudo systemctl restart dbd-backend
 sudo systemctl restart dbd-frontend
 
+# ── 5. Certbot хуки для автообновления сертификата ───────────────────────────
+PRE_HOOK="/etc/letsencrypt/renewal-hooks/pre/stop-nginx.sh"
+POST_HOOK="/etc/letsencrypt/renewal-hooks/post/start-nginx.sh"
+
+if [ ! -f "$PRE_HOOK" ]; then
+    cat > "$PRE_HOOK" << 'EOF'
+#!/bin/bash
+cd /srv/dbd-tomes-challenges
+docker compose stop nginx
+EOF
+    chmod +x "$PRE_HOOK"
+    echo "Created certbot pre-hook"
+fi
+
+if [ ! -f "$POST_HOOK" ]; then
+    cat > "$POST_HOOK" << 'EOF'
+#!/bin/bash
+cd /srv/dbd-tomes-challenges
+docker compose start nginx
+EOF
+    chmod +x "$POST_HOOK"
+    echo "Created certbot post-hook"
+fi
+
 echo "=== Deploy finished at $(date) ==="
