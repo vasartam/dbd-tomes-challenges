@@ -96,7 +96,7 @@ export default observer(function TomePage({ archiveKey, initialPageLevel, onBack
               depsMap.set(page.id, deps)
               completionMap.set(page.id, completion)
             } catch {
-              depsMap.set(page.id, { challenges: [], dependencies: [] })
+              depsMap.set(page.id, { challenges: [], dependencies: [], level_number: page.level_number, is_first_page: false, prev_page_id: null })
             }
           })
         )
