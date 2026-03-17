@@ -64,9 +64,11 @@ jobs:
           key:      ${{ secrets.DEPLOY_SSH_KEY }}
           envs:     GITHUB_REPOSITORY
           script: |
+            set -e
             cd /srv/dbd-tomes-challenges
             # Подтягиваем актуальные конфиги (docker-compose.yml, nginx.conf и др.)
-            git pull
+            git fetch origin
+            git reset --hard origin/master
             # Логинимся в ghcr.io под токеном, сохранённым на сервере
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             # Скачиваем свежие образы и перезапускаем
