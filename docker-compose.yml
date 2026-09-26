@@ -32,6 +32,9 @@ services:
       - ./deploy/nginx-docker.conf:/etc/nginx/conf.d/default.conf:ro
       # SSL-сертификаты монтируются с хоста (certbot на хосте)
       - /etc/letsencrypt:/etc/letsencrypt:ro
+      # Конфиги соседних сайтов на этом сервере (invest.vasartam.ru и др.) — подключаются
+      # строкой include в конце deploy/nginx-docker.conf; там же их unix-сокеты (run/).
+      - /srv/nginx-extra:/etc/nginx/extra:ro
     depends_on:
       - backend
       - frontend
